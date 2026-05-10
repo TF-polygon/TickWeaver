@@ -33,6 +33,11 @@ dev = [
     "pandas-stubs",
     "types-PyYAML",
 ]
+viz = [
+    "PyQt6>=6.6",
+    "pyqtgraph>=0.13",
+    "finplot>=1.9",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
