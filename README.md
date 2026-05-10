@@ -67,7 +67,7 @@ Open `reports/<strategy>_<UTC ts>/report.html` in a browser.
   and a "Tick Synthesis (proof)" section showing seed and per-bar statistics.
 - **Live `tqdm` progress** with rolling equity update; auto-disabled in
   non-tty (e.g. pytest, CI).
-- **MT4-EA-style strategy authoring**: a single `.py` file with optional
+- **Strategy authoring**: a single `.py` file with optional
   paired `.json` parameters. The engine injects `api`, `params`, and
   `context` into module globals.
 
@@ -109,7 +109,7 @@ python scripts/run_backtest.py --strategy rsi_mean_reversion
 ```
 
 See [`strategies/_reference.md`](strategies/_reference.md) for the full
-API dictionary (signatures, types, patterns, pitfalls) — MT4 F1 style.
+API dictionary (signatures, types, patterns, pitfalls).
 
 ## Architecture (current scope)
 
@@ -138,7 +138,7 @@ CCXT OHLCV download
 - [`docs/DEVELOPER_GUIDE.md`](docs/DEVELOPER_GUIDE.md) — architecture,
   six extension scenarios, testing, debugging, release
 - [`strategies/_reference.md`](strategies/_reference.md) — strategy
-  API reference (MT4 F1 help style)
+  API reference
 - [`plan.md`](plan.md) — single source of truth for design decisions
   (D1~D17), milestones, and the risk register
 
