@@ -1,11 +1,17 @@
-"""finplot-based replay viewer (Phase 4 + 5, dark theme, spot trading).
+"""finplot-based replay viewer (Phase 4.2 + viz tune-up).
 
-Two modes:
-    show_replay()    - all data shown at once (post-hoc, default)
-    show_streaming() - all data plotted but viewport moves one bar per tick
+Single mode:
+    show_replay() - all data shown at once (post-hoc).
 
 Trading model: SPOT only. Buy / Sell are the only sides we render.
-Future trading mode (long/short open/close) is a future extension.
+
+X-axis snap (finplot category-axis fix):
+  finplot maps each candle timestamp to a category index. Sub-bar fill
+  timestamps (e.g. 04:04:05.45 inside an hourly bar at 04:00) do not exist
+  in that index, so without a fix finplot scatters them into "between" slots
+  that drift away from the candles. We snap each fill_ts to the close_ts of
+  the candle that contains it, preserving fill_price (y) precision -- a wick
+  fill still lands inside the wick visually, just snapped to the bar's column.
 """
 
 from __future__ import annotations
@@ -34,6 +40,11 @@ _SELL = "#FF9800"    # orange "<"
 # Pair connecting line (Buy -> Sell, blue dashed)
 _PAIR = "#2196F3"
 
+# Marker styling (viz tune-up)
+_MARKER_SIZE = 7
+_MARKER_OUTLINE = "#FFFFFF"
+_MARKER_OUTLINE_WIDTH = 1.0
+
 
 def _build_ohlc_df(recorder: "EventRecorder") -> pd.DataFrame:
     if not recorder.bars:
@@ -51,6 +62,24 @@ def _build_ohlc_df(recorder: "EventRecorder") -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows, index=pd.DatetimeIndex(idx))
+
+
+def _snap_to_candle(fill_ts, candle_index: pd.DatetimeIndex) -> pd.Timestamp:
+    """Map a fill timestamp to the close_ts of the candle that contains it.
+
+    Bar B has close_ts at index i. Its ticks span (B-1.close_ts, B.close_ts].
+    For boundary fills (fill_ts == prev candle close_ts), the tick is the FIRST
+    tick of the next bar -> snap forward to that next bar's close_ts.
+    """
+    ft = pd.Timestamp(fill_ts)
+    pos = candle_index.searchsorted(ft, side="right")
+    if pos >= len(candle_index):
+        pos = len(candle_index) - 1
+    return candle_index[pos]
+
+
+def _snap_list(fill_ts_list, candle_index: pd.DatetimeIndex) -> list:
+    return [_snap_to_candle(t, candle_index) for t in fill_ts_list]
 
 
 def _apply_dark_theme(fplt) -> None:
@@ -78,7 +107,7 @@ def _draw_pair_line(fplt, ax, x0, y0, x1, y1, color: str) -> None:
 
 
 def _split_buy_sell(recorder: "EventRecorder"):
-    """Return (buy_series, sell_series) of (ts, price) lists."""
+    """Return (buy_x, buy_y, sell_x, sell_y)."""
     buy_x: list = []
     buy_y: list = []
     sell_x: list = []
@@ -105,44 +134,25 @@ def _trades(recorder: "EventRecorder") -> list:
         return []
 
 
-def _plot_full(fplt, ax, df: pd.DataFrame, recorder: "EventRecorder") -> None:
-    """Render the candlestick + markers + pair lines + comment.
+def _style_marker(item, fill_color: str) -> None:
+    """Apply white outline + smaller size on a finplot scatter symbol item.
 
-    Used by both show_replay and show_streaming. The streaming mode then
-    only animates the viewport on top of this fully-drawn chart.
+    Best-effort: if the underlying object is not a pyqtgraph PlotDataItem,
+    fall back to defaults silently.
     """
-    fplt.candlestick_ochl(df[["open", "close", "high", "low"]], ax=ax)
+    try:
+        import pyqtgraph as pg
 
-    # Pair lines (round-trip Buy -> Sell)
-    for t in _trades(recorder):
-        _draw_pair_line(
-            fplt, ax,
-            pd.Timestamp(t.entry_ts), float(t.entry_price),
-            pd.Timestamp(t.exit_ts), float(t.exit_price),
-            _PAIR,
-        )
-
-    # Buy / Sell markers
-    bx, by, sx, sy = _split_buy_sell(recorder)
-    if bx:
-        s = pd.Series(by, index=pd.DatetimeIndex(bx))
-        fplt.plot(s, style=">", color=_BUY, width=2, ax=ax, legend="Buy")
-    if sx:
-        s = pd.Series(sy, index=pd.DatetimeIndex(sx))
-        fplt.plot(s, style="<", color=_SELL, width=2, ax=ax, legend="Sell")
-
-    # Comment label
-    if recorder.comments:
-        last_text = recorder.comments[-1].text
-        try:
-            fplt.add_legend(last_text, ax=ax)
-        except Exception:
-            pass
+        if hasattr(item, "setSymbolSize"):
+            item.setSymbolSize(_MARKER_SIZE)
+        if hasattr(item, "setSymbolPen"):
+            item.setSymbolPen(pg.mkPen(_MARKER_OUTLINE, width=_MARKER_OUTLINE_WIDTH))
+        if hasattr(item, "setSymbolBrush"):
+            item.setSymbolBrush(pg.mkBrush(fill_color))
+    except Exception:
+        pass
 
 
-# ---------------------------------------------------------------------------
-# Mode 1: post-hoc replay (all at once)
-# ---------------------------------------------------------------------------
 def show_replay(
     recorder: "EventRecorder",
     symbol: str = "",
@@ -161,95 +171,44 @@ def show_replay(
     if df.empty:
         raise RuntimeError("No bars captured - cannot open replay viewer.")
 
+    candle_index: pd.DatetimeIndex = df.index
+
     _apply_dark_theme(fplt)
     title = f"{symbol} {timeframe}".strip() or "tickweaver replay"
     ax = fplt.create_plot(title, maximize=False, init_zoom_periods=200)
-    _plot_full(fplt, ax, df, recorder)
-    fplt.show(qt_exec=block)
 
+    fplt.candlestick_ochl(df[["open", "close", "high", "low"]], ax=ax)
 
-# ---------------------------------------------------------------------------
-# Mode 2: streaming (viewport shifts one bar per tick)
-# ---------------------------------------------------------------------------
-def show_streaming(
-    recorder: "EventRecorder",
-    symbol: str = "",
-    timeframe: str = "",
-    interval_ms: int = 100,
-    bars_per_view: int = 80,
-    block: bool = True,
-) -> None:
-    """Same chart as show_replay but viewport advances one bar every interval.
+    # Pair lines - snap both endpoints to candle indices.
+    for t in _trades(recorder):
+        e_x = _snap_to_candle(pd.Timestamp(t.entry_ts), candle_index)
+        x_x = _snap_to_candle(pd.Timestamp(t.exit_ts), candle_index)
+        _draw_pair_line(
+            fplt, ax,
+            e_x, float(t.entry_price),
+            x_x, float(t.exit_price),
+            _PAIR,
+        )
 
-    Args:
-        recorder: EventRecorder.
-        symbol / timeframe: window title hints.
-        interval_ms: milliseconds between viewport advances. 100ms = 10 bars/sec.
-        bars_per_view: how many bars are visible in the viewport at once.
-        block: if True, wait until the user closes the window.
+    # Buy / Sell markers - x snapped to candle, y kept at fill_price.
+    bx, by, sx, sy = _split_buy_sell(recorder)
+    if bx:
+        bx_snap = _snap_list(bx, candle_index)
+        s = pd.Series(by, index=pd.DatetimeIndex(bx_snap))
+        item = fplt.plot(s, style=">", color=_BUY, ax=ax, legend="Buy")
+        _style_marker(item, _BUY)
+    if sx:
+        sx_snap = _snap_list(sx, candle_index)
+        s = pd.Series(sy, index=pd.DatetimeIndex(sx_snap))
+        item = fplt.plot(s, style="<", color=_SELL, ax=ax, legend="Sell")
+        _style_marker(item, _SELL)
 
-    Implementation:
-        - All data is plotted up front (deterministic, simple, thread-safe).
-        - A QTimer advances the viewport one bar at a time so the user sees
-          bars 'arriving' at the right edge.
-        - Mouse drag still works (default finplot pan/zoom is preserved).
-    """
-    try:
-        import finplot as fplt
-    except ImportError as e:
-        raise RuntimeError(
-            "finplot is not installed. Run: pip install -r requirements-viz.txt"
-        ) from e
-
-    df = _build_ohlc_df(recorder)
-    if df.empty:
-        raise RuntimeError("No bars captured - cannot open streaming viewer.")
-
-    _apply_dark_theme(fplt)
-    title_suffix = " (streaming)" if bars_per_view < len(df) else ""
-    title = (f"{symbol} {timeframe}".strip() or "tickweaver streaming") + title_suffix
-    ax = fplt.create_plot(title, maximize=False, init_zoom_periods=bars_per_view)
-    _plot_full(fplt, ax, df, recorder)
-
-    n = len(df)
-    state = {"i": min(bars_per_view, n), "stopped": False}
-
-    def _set_viewport(end_idx: int) -> None:
-        """Set X range to [end_idx - bars_per_view, end_idx]."""
-        if end_idx <= 0:
-            return
-        start_idx = max(0, end_idx - bars_per_view)
-        x_start = pd.Timestamp(df.index[start_idx]).value / 1e9
-        x_end_ts = df.index[min(end_idx, n - 1)]
-        x_end = pd.Timestamp(x_end_ts).value / 1e9
-        # Try the various viewport APIs finplot exposes
+    # Comment label
+    if recorder.comments:
+        last_text = recorder.comments[-1].text
         try:
-            ax.set_visible_range(x_start, x_end)  # newer finplot
-            return
-        except (AttributeError, TypeError):
-            pass
-        try:
-            ax.vb.setXRange(x_start, x_end, padding=0)  # pyqtgraph viewbox
-            return
+            fplt.add_legend(last_text, ax=ax)
         except Exception:
             pass
-
-    # Initial viewport
-    _set_viewport(state["i"])
-
-    def _step():
-        if state["stopped"]:
-            return
-        if state["i"] >= n:
-            state["stopped"] = True
-            return
-        state["i"] += 1
-        _set_viewport(state["i"])
-
-    try:
-        fplt.timer_callback(_step, interval_ms / 1000.0)
-    except Exception:
-        # If finplot lacks timer_callback, fall back to a static replay.
-        pass
 
     fplt.show(qt_exec=block)

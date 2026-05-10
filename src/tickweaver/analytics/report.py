@@ -120,6 +120,23 @@ def save_report(result: BacktestResult, out_dir: Path) -> dict[str, Any]:
     result.equity_curve.to_parquet(out_dir / "equity.parquet")
     if not trades_df.empty:
         trades_df.to_parquet(out_dir / "trades.parquet")
+    # Raw fills (csv for inspectability) — used by scripts/diagnose_fills.py.
+    if result.fills:
+        fills_rows = []
+        for f in result.fills:
+            fills_rows.append(
+                {
+                    "order_id": f.order_id,
+                    "symbol": f.symbol,
+                    "side": f.side.value if hasattr(f.side, "value") else str(f.side),
+                    "qty": float(f.qty),
+                    "price": float(f.price),
+                    "fee": float(f.fee),
+                    "timestamp": f.timestamp.isoformat(),
+                    "pnl_realized": float(f.pnl_realized),
+                }
+            )
+        pd.DataFrame(fills_rows).to_csv(out_dir / "fills.csv", index=False)
     with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2, default=str)
     with open(out_dir / "tick_summary.json", "w", encoding="utf-8") as f:
