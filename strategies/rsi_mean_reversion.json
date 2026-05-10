@@ -1,0 +1,7 @@
+{
+  "_comment": "RSI mean reversion — buy when oversold, sell when overbought",
+  "rsi_period": 14,
+  "oversold": 30.0,
+  "overbought": 70.0,
+  "size_pct": 0.2
+}
