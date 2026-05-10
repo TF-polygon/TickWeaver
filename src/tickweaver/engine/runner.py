@@ -1,6 +1,7 @@
 """run_backtest - config + strategy path + source path -> BacktestResult.
 
 D17: only --strategy is required; everything else has defaults.
+D19: optional chart_hook for visualization (Phase 3).
 """
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
@@ -30,6 +32,9 @@ from tickweaver.utils.paths import (
     ensure_runtime_dirs,
 )
 from tickweaver.utils.seed import SeedManager
+
+if TYPE_CHECKING:
+    from tickweaver.viz.hook import ChartHook
 
 _LOG = get_logger("runner")
 
@@ -77,6 +82,7 @@ def run_backtest(
     auto_period: bool = True,
     generator_override: str | None = None,
     show_progress: bool = True,
+    chart_hook: "ChartHook | None" = None,
 ) -> BacktestResult:
     ensure_runtime_dirs()
 
@@ -143,7 +149,12 @@ def run_backtest(
         slippage_model=slippage,
     )
     # When progress bar is on, silence strategy api.log to keep tqdm clean.
-    api = StrategyAPI(broker=broker, symbol=symbol, console_log=not show_progress)
+    api = StrategyAPI(
+        broker=broker,
+        symbol=symbol,
+        console_log=not show_progress,
+        chart_hook=chart_hook,
+    )
 
     context = StrategyContext(
         symbol=symbol,
@@ -166,6 +177,7 @@ def run_backtest(
         n_max=cfg.tick_synthesis.n_max,
         dump_ticks=cfg.reporting.dump_ticks,
         show_progress=show_progress,
+        chart_hook=chart_hook,
         config_snapshot={
             "config": cfg.to_dict(),
             "strategy_path": str(strategy_p.resolve()),

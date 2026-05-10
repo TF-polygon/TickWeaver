@@ -7,13 +7,16 @@ Lookahead protection (plan.md S.10): for each bar t we run
     2. for each tick: broker.on_market_event (fill pending orders), strategy.on_tick
     3. strategy.on_bar(current bar)  <- orders submitted here fill from
                                         the FIRST tick of the NEXT bar
+
+Visualization hook (plan_viz.md V1, D19): an optional ChartHook observes
+events without affecting backtest determinism (V2). NullHook by default.
 """
 
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -33,12 +36,15 @@ from tickweaver.tick_synthesis.validator import validate_ticks
 from tickweaver.utils.logger import get_logger
 from tickweaver.utils.seed import SeedManager
 
+if TYPE_CHECKING:
+    from tickweaver.viz.hook import ChartHook
+
 _LOG = get_logger("engine")
 
 
 @dataclass
 class TickSummary:
-    """For the report's 'Tick Synthesis (proof)' section (M6.3)."""
+    """For the report's Tick Synthesis (proof) section (M6.3)."""
 
     generator: str
     seed: int
@@ -76,6 +82,7 @@ class BacktestEngine:
         dump_ticks: int = 0,
         config_snapshot: dict[str, Any] | None = None,
         show_progress: bool = True,
+        chart_hook: "ChartHook | None" = None,
     ) -> None:
         self.df = df
         self.broker = broker
@@ -89,6 +96,12 @@ class BacktestEngine:
         self.dump_ticks = int(dump_ticks)
         self.config_snapshot = config_snapshot or {}
         self.show_progress = bool(show_progress)
+        # ChartHook (V1 non-invasive). Lazy import to keep core GUI-free.
+        if chart_hook is None:
+            from tickweaver.viz.hook import NullHook
+
+            chart_hook = NullHook()
+        self.chart_hook = chart_hook
 
     def run(self) -> BacktestResult:
         feed = ReplayFeed(self.df)
@@ -96,12 +109,28 @@ class BacktestEngine:
         if n_bars == 0:
             raise ValueError("empty OHLCV - cannot run backtest")
 
-        # tick count RNG (per bar)
+        # Per-bar tick count RNG
         n_target_rng = self.seed_manager.rng("n_target")
 
         # Strategy lifecycle
         self.strategy.load(self.api, self.context)
         self.strategy.call_on_init()
+
+        # Hook: on_init (V6 - same call regardless of viz on/off)
+        self.chart_hook.on_init()
+
+        # Wire broker fills -> chart_hook.on_fill
+        prev_cb = getattr(self.broker, "_fill_callback", None)
+
+        def _on_fill(fill: Fill) -> None:
+            if prev_cb is not None:
+                try:
+                    prev_cb(fill)
+                except Exception:
+                    pass
+            self.chart_hook.on_fill(fill)
+
+        self.broker.set_fill_callback(_on_fill)
 
         equity_rows: list[tuple[pd.Timestamp, float]] = []
         n_ticks_total = 0
@@ -114,7 +143,7 @@ class BacktestEngine:
             sample_bar_indices = sorted(r.sample(range(n_bars), k))
         sample_rows: list[dict[str, Any]] = []
 
-        # Build the bar iterator, optionally wrapped with tqdm progress bar.
+        # Build the bar iterator (optionally with tqdm progress bar)
         bar_events = feed.iter_bars()
         bars_iter = enumerate(bar_events)
         progress_bar = None
@@ -127,7 +156,7 @@ class BacktestEngine:
                     total=n_bars,
                     unit="bar",
                     leave=True,
-                    disable=None,  # auto-disable on non-tty
+                    disable=None,
                     bar_format="{percentage:3.0f}% {bar}| {n_fmt}/{total_fmt} [{elapsed}, {rate_fmt}{postfix}]",
                 )
                 bars_iter = progress_bar
@@ -139,6 +168,9 @@ class BacktestEngine:
                 bar: OHLCBar = ev.bar
                 self.context.bar_index = bar_idx
                 self.context.now = bar.timestamp
+                # Keep StrategyAPI bar_index in sync for api.comment()
+                if hasattr(self.api, "_set_bar_index"):
+                    self.api._set_bar_index(bar_idx)
 
                 # 1. synthesize ticks
                 n_target = int(n_target_rng.integers(self.n_min, self.n_max + 1))
@@ -154,9 +186,10 @@ class BacktestEngine:
                 validate_ticks(bar, ticks, n_min=self.n_min, n_max=self.n_max)
                 n_ticks_total += len(ticks)
 
-                # 2. each tick - fill pending orders + strategy.on_tick
+                # 2. each tick - fill pending orders + strategy.on_tick + chart_hook.on_tick
                 for t in ticks:
                     self.broker.on_market_event(t)
+                    self.chart_hook.on_tick(t)
                     self.strategy.call_on_tick(t)
 
                 # bar-end equity sample
@@ -176,8 +209,9 @@ class BacktestEngine:
 
                 # 3. on_bar (after the bar closed)
                 self.strategy.call_on_bar(bar)
+                self.chart_hook.on_bar(bar, bar_idx)
 
-                # progress postfix every 100 bars (equity only)
+                # progress postfix every 100 bars
                 if progress_bar is not None and (bar_idx % 100 == 0):
                     progress_bar.set_postfix_str(f"equity={self.broker.equity:.0f}")
 
@@ -188,7 +222,10 @@ class BacktestEngine:
                 progress_bar.close()
 
         self.strategy.call_on_deinit()
+        # Hook: on_deinit
+        self.chart_hook.on_deinit(self.broker.equity)
 
+        # Assemble result
         eq_df = pd.DataFrame(equity_rows, columns=["timestamp", "equity"]).set_index(
             "timestamp"
         )

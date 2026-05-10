@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
@@ -20,6 +20,9 @@ from tickweaver.core.types import (
 )
 from tickweaver.execution.backtest_broker import BacktestBroker
 from tickweaver.utils.logger import get_logger
+
+if TYPE_CHECKING:
+    from tickweaver.viz.hook import ChartHook
 
 
 class ParamsView:
@@ -55,6 +58,7 @@ class StrategyAPI:
         symbol: str,
         qty_step: float = 1e-6,
         console_log: bool = True,
+        chart_hook: "ChartHook | None" = None,
     ) -> None:
         self._broker = broker
         self._symbol = symbol
@@ -62,6 +66,13 @@ class StrategyAPI:
         self._coid_counter = itertools.count(1)
         self._log = get_logger("strategy")
         self._console_log = bool(console_log)
+        self._chart_hook = chart_hook
+        # bar_index is updated by the engine via set_bar_index.
+        self._current_bar_index: int = 0
+
+    def _set_bar_index(self, bar_index: int) -> None:
+        # Engine-only call to keep comment() bar_index accurate.
+        self._current_bar_index = int(bar_index)
 
     # ---- orders ----
     def market_buy(self, qty: float) -> str:
@@ -146,10 +157,26 @@ class StrategyAPI:
 
     def log(self, msg: str, **kwargs: Any) -> None:
         # console_log=False -> noop (e.g. when progress bar is on).
-        # Use --no-progress on the CLI to see strategy logs in the console.
         if not self._console_log:
             return
         self._log.info(msg, **kwargs)
+
+    def comment(self, text: str) -> None:
+        """Top-left chart text (MT4 Comment() equivalent, D21).
+
+        Behavior:
+            - chart_hook is None: noop (V3, viz disabled)
+            - chart_hook is NullHook: noop (default)
+            - chart_hook is EventRecorder/LiveChartHook: text replaces the
+              top-left label in the live chart window.
+
+        Args:
+            text: The text to display. Use ``\n`` for line breaks.
+                  Empty string clears the label.
+        """
+        if self._chart_hook is None:
+            return
+        self._chart_hook.on_comment(str(text), self._current_bar_index)
 
     # ---- internal ----
     def _submit(
