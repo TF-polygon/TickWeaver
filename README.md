@@ -139,8 +139,6 @@ CCXT OHLCV download
   six extension scenarios, testing, debugging, release
 - [`strategies/_reference.md`](strategies/_reference.md) — strategy
   API reference
-- [`plan.md`](plan.md) — single source of truth for design decisions
-  (D1~D17), milestones, and the risk register
 
 ## Current status
 
@@ -166,9 +164,6 @@ CCXT OHLCV download
 | D16 | uniform vs bridge comparison is `compare_runs.py` only |
 | D17 | `run_backtest.py` requires only `--strategy`; auto-resolves the path |
 
-See [`plan.md`](plan.md) for the full register, rationale, and the
-changelog of how each decision evolved.
-
 ## Why "synthetic tick"?
 
 Synthesizing intra-bar ticks is a **methodology to narrow the gap between
@@ -185,5 +180,4 @@ covered there as worked examples.
 
 When opening a PR:
 - run `pytest --hypothesis-show-statistics` and ensure all 92+ tests pass
-- update `plan.md` §11.4 changelog if you change a locked decision
 - keep new modules import-clean (no circular imports across layers)
