@@ -1,12 +1,17 @@
-"""scripts/run_backtest.py - D17 simplified CLI.
+"""scripts/run_backtest.py - tickweaver backtest CLI.
 
-Only --strategy is required; everything else has defaults.
---strategy auto-resolves: 'rsi_mean_reversion' -> strategies/rsi_mean_reversion.py.
---viz opens a finplot window after the backtest finishes (Phase 4 replay).
+The yaml config (configs/<env>.yaml) fully defines the environment.
+The strategy .py owns trading parameters. No json side-files.
 
-Examples:
+Usage:
     python scripts/run_backtest.py --strategy rsi_mean_reversion
-    python scripts/run_backtest.py --strategy rsi_mean_reversion --viz
+    python scripts/run_backtest.py --strategy rsi_mean_reversion --config btc_4h.yaml
+    python scripts/run_backtest.py --strategy ema_market_sl_tp --viz
+
+--config accepts:
+    - bare filename like "btc_4h.yaml"  -> resolved under configs/
+    - path with separator              -> used as given
+    - absolute path                    -> used as given
 """
 
 from __future__ import annotations
@@ -21,9 +26,30 @@ sys.path.insert(0, str(_ROOT / "src"))
 import typer  # noqa: E402
 
 from tickweaver.engine.runner import run_backtest  # noqa: E402
-from tickweaver.utils.paths import resolve_strategy_path  # noqa: E402
+from tickweaver.utils.paths import CONFIGS_DIR, resolve_strategy_path  # noqa: E402
 
-app = typer.Typer(add_completion=False, help="tickweaver backtest runner (D17)")
+app = typer.Typer(add_completion=False, help="tickweaver backtest runner")
+
+
+def _resolve_config_path(raw: str | Path | None) -> Path | None:
+    """Resolve --config argument with configs/ default prefix.
+
+    Rules:
+      - None: caller (runner) uses DEFAULT_BACKTEST_CONFIG
+      - absolute path: used as given
+      - contains path separator: used as given (relative to cwd)
+      - bare filename (e.g. "btc_4h.yaml"): looked up under configs/
+    """
+    if raw is None:
+        return None
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    s = str(raw)
+    if "/" in s or "\\" in s:
+        return p
+    # bare filename -> configs/
+    return CONFIGS_DIR / p
 
 
 @app.command()
@@ -32,8 +58,15 @@ def main(
         ...,
         "--strategy",
         "-s",
-        help="strategy: name / name.py / strategies/name.py / abs path. "
+        help="strategy name / .py / strategies/.py / abs path. "
              "Auto-resolves under strategies/ when no separator.",
+    ),
+    config: str | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="backtest yaml. bare filename resolves under configs/. "
+             "Defaults to configs/default.yaml.",
     ),
     out_dir: Path | None = typer.Option(
         None,
@@ -41,31 +74,10 @@ def main(
         "-o",
         help="output dir; defaults to reports/<strategy>_<UTC ts>/",
     ),
-    config: Path | None = typer.Option(
-        None,
-        "--config",
-        "-c",
-        help="backtest config yaml; defaults to configs/backtest/default.yaml",
-    ),
-    source: Path | None = typer.Option(
-        None,
-        "--source",
-        help="OHLCV parquet path; defaults to latest mtime under data/processed/",
-    ),
-    params: Path | None = typer.Option(
-        None,
-        "--params",
-        help="strategy params .json (defaults to <strategy>.json auto pairing)",
-    ),
     dump_ticks: int = typer.Option(
         0,
         "--dump-ticks",
         help="dump synthesized ticks for N sample bars",
-    ),
-    no_auto_period: bool = typer.Option(
-        False,
-        "--no-auto-period",
-        help="disable auto-period (use config period.start / period.end)",
     ),
     no_progress: bool = typer.Option(
         False,
@@ -80,9 +92,13 @@ def main(
     ),
 ) -> None:
     """Run a backtest. Optionally open a replay viewer with --viz."""
-    resolved = resolve_strategy_path(strategy)
-    if str(resolved) != strategy:
-        typer.echo(f"resolved --strategy: {strategy} -> {resolved}")
+    resolved_strategy = resolve_strategy_path(strategy)
+    if str(resolved_strategy) != strategy:
+        typer.echo(f"resolved --strategy: {strategy} -> {resolved_strategy}")
+
+    resolved_config = _resolve_config_path(config)
+    if config is not None and str(resolved_config) != config:
+        typer.echo(f"resolved --config: {config} -> {resolved_config}")
 
     chart_hook = None
     if viz:
@@ -94,18 +110,13 @@ def main(
                 "Install with: pip install -r requirements-viz.txt"
             )
             raise typer.Exit(code=2)
-        # symbol/timeframe filled inside engine via context, but we pass empty
-        # placeholders - the LiveChartHook reads them from recorded bars too.
         chart_hook = LiveChartHook(symbol="", timeframe="", block=True)
 
     result = run_backtest(
-        strategy_path=resolved,
+        strategy_path=resolved_strategy,
         out_dir=out_dir,
-        config_path=config,
-        source=source,
-        params_path=params,
+        config_path=resolved_config,
         dump_ticks=dump_ticks,
-        auto_period=not no_auto_period,
         show_progress=not no_progress,
         chart_hook=chart_hook,
     )

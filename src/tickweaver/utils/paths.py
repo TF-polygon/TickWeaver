@@ -16,7 +16,7 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 REPORTS_DIR: Path = PROJECT_ROOT / "reports"
 CONFIGS_DIR: Path = PROJECT_ROOT / "configs"
 STRATEGIES_DIR: Path = PROJECT_ROOT / "strategies"
-DEFAULT_BACKTEST_CONFIG: Path = CONFIGS_DIR / "backtest" / "default.yaml"
+DEFAULT_BACKTEST_CONFIG: Path = CONFIGS_DIR / "default.yaml"
 
 
 def ensure_runtime_dirs() -> None:

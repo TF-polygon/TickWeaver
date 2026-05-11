@@ -1,4 +1,4 @@
-"""StrategyAPI + ParamsView - gateway injected into file-based strategies.
+"""StrategyAPI - gateway injected into file-based strategies.
 
 Reference: strategies/_reference.md sections 3 and 4
 """
@@ -25,28 +25,6 @@ if TYPE_CHECKING:
     from tickweaver.viz.hook import ChartHook
 
 
-class ParamsView:
-    """Read-only view over the paired <strategy>.json (D8)."""
-
-    def __init__(self, data: dict[str, Any] | None = None) -> None:
-        self._data: dict[str, Any] = dict(data or {})
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self._data.get(key, default)
-
-    def require(self, key: str) -> Any:
-        if key not in self._data:
-            raise KeyError(f"required param missing: {key!r}")
-        return self._data[key]
-
-    def contains(self, key: str) -> bool:
-        return key in self._data
-
-    def __contains__(self, key: object) -> bool:
-        return key in self._data
-
-    def __repr__(self) -> str:
-        return f"ParamsView({self._data!r})"
 
 
 class StrategyAPI:

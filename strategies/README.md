@@ -1,31 +1,50 @@
 # strategies/
 
-사용자 전략 파일이 들어가는 디렉토리입니다 (MT4 EA 스타일).
+User strategy files (MT4 EA style, single `.py` per strategy).
 
-## 시작하기
+## Getting started
 
-1. `_starter.py` 와 `_starter.json` 을 복사해서 자신의 전략으로 만드세요
-   ```powershell
-   copy strategies\_starter.py    strategies\my_alpha.py
-   copy strategies\_starter.json  strategies\my_alpha.json
-   ```
-2. `my_alpha.py` 의 `on_bar(bar)` 만 수정하면 됩니다.
-3. 실행:
-   ```powershell
-   python scripts/run_backtest.py --strategy strategies/my_alpha.py
+1. Copy `_starter.py` to your strategy file:
+
+   ```bash
+   cp strategies/_starter.py strategies/my_alpha.py
    ```
 
-## 레퍼런스
+2. Edit trading parameters (module constants at the top) and `on_bar` /
+   `on_tick` logic inside `my_alpha.py`.
 
-`_reference.md` — MT4 F1 도움말 스타일의 사전형 API 레퍼런스. 라이프사이클 훅, 주입 globals, StrategyAPI/ParamsView 메서드, 타입, 자주 쓰는 패턴, 함정 등을 한 파일에서 찾을 수 있습니다.
+3. Pick or create a yaml config under `configs/` (the yaml defines the
+   environment: exchange / symbol / timeframe / period / costs).
 
-## 커밋 규칙
+4. Run:
 
-이 디렉토리에서 git 에 커밋되는 파일은 다음 4개뿐입니다 (`.gitignore` 참조):
+   ```bash
+   python scripts/run_backtest.py --strategy my_alpha
+   python scripts/run_backtest.py --strategy my_alpha --config btc_4h.yaml
+   ```
 
-- `_starter.py` — 보일러플레이트
-- `_starter.json` — 파라미터 템플릿
-- `_reference.md` — API 레퍼런스
-- `README.md` — 본 문서
+## Convention — code vs config
 
-사용자 전략 (`my_alpha.py`, `my_alpha.json` 등) 은 자동으로 무시됩니다.
+| File | Role |
+|---|---|
+| `strategies/<name>.py` | Strategy logic + trading parameters (RSI_PERIOD, SL_PCT, etc.) as module constants |
+| `configs/<env>.yaml` | Backtest environment: data source, costs, tick synthesis, reporting |
+
+There is no `<name>.json` side-file. Trading parameters belong inside the
+`.py` because they are part of the strategy code.
+
+## Reference strategies
+
+| File | Pattern |
+|---|---|
+| `_starter.py` | Boilerplate. Copy this to start a new strategy |
+| `buy_and_hold.py` | Smoke test (buys first bar, holds) |
+| `ema_cross.py` | Pattern 1 — on_bar only (EMA cross entry + cross exit) |
+| `rsi_mean_reversion.py` | Pattern 1 — on_bar only (RSI threshold) |
+| `ema_market_sl_tp.py` | Pattern 2 — on_bar entry + on_tick market SL/TP exit |
+| `limit_demo.py` | LIMIT / STOP order types demo |
+
+## API reference
+
+See `_reference.md` for the full StrategyAPI / lifecycle / types / patterns
+dictionary.

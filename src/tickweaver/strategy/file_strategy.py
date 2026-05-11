@@ -1,51 +1,41 @@
-"""FileStrategy — `.py` 동적 로드 + JSON 페어링 + 모듈 globals 주입.
+"""FileStrategy - dynamic load of strategies/<name>.py + globals injection.
 
-D8 / M6.4. 사용자가 `strategies/my_alpha.py` 를 작성하면, 본 클래스가:
-1. 모듈을 동적으로 import 하고
-2. `<my_alpha>.json` 이 있으면 ParamsView 로 페어링
-3. 모듈 globals 에 api / params / context 주입
-4. on_init / on_bar / on_tick / on_fill / on_deinit 디스패치
+The engine instantiates this and calls load() then the lifecycle hooks
+(on_init / on_bar / on_tick / on_fill / on_deinit). Each hook is optional.
+
+The strategy module receives:
+  - api      (StrategyAPI)        order / position / account gateway
+  - context  (StrategyContext)    symbol / timeframe / bar_index
+  - Side / OrderType / PositionSide (convenience enums)
+
+Trading parameters belong INSIDE the .py as module constants. There is no
+json side-file anymore; the yaml config under configs/ defines the backtest
+environment, and the .py defines the strategy.
 """
 
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from tickweaver.core.exceptions import StrategyError
 from tickweaver.core.types import Fill, OHLCBar, StrategyContext, Tick
-from tickweaver.strategy.api import ParamsView, StrategyAPI
+from tickweaver.strategy.api import StrategyAPI
 
 
 class FileStrategy:
-    """ABC 상속 안 함 — 어댑터로만 동작 (registry 모드 와 공존)."""
+    """Adapter for file-based strategies."""
 
-    def __init__(self, path: str | Path, params_path: str | Path | None = None) -> None:
+    def __init__(self, path: str | Path) -> None:
         self.path = Path(path).resolve()
         if not self.path.exists():
             raise StrategyError(f"strategy file not found: {self.path}")
-        self._params_path = self._resolve_params_path(params_path)
         self._module: ModuleType | None = None
-        self._params: ParamsView | None = None
-
-    @staticmethod
-    def _resolve_params_path(params_path: str | Path | None) -> Path | None:
-        if params_path is not None:
-            p = Path(params_path)
-            if not p.exists():
-                raise StrategyError(f"params file not found: {p}")
-            return p
-        return None
-
-    def _auto_pair_params(self, strategy_path: Path) -> Path | None:
-        candidate = strategy_path.with_suffix(".json")
-        return candidate if candidate.exists() else None
 
     def load(self, api: StrategyAPI, context: StrategyContext) -> None:
-        """모듈 import + globals 주입. on_init 호출은 별도."""
+        """Import the module + inject globals. on_init is called separately."""
         spec = importlib.util.spec_from_file_location(
             f"_user_strategy_{self.path.stem}", self.path
         )
@@ -54,32 +44,17 @@ class FileStrategy:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        params_path = self._params_path or self._auto_pair_params(self.path)
-        params_data: dict[str, Any] = {}
-        if params_path is not None:
-            with open(params_path, encoding="utf-8") as f:
-                raw = json.load(f) or {}
-            params_data = {k: v for k, v in raw.items() if not k.startswith("_")}
-        params = ParamsView(params_data)
-
-        # 모듈 globals 에 주입
-        module.api = api  # type: ignore[attr-defined]
-        module.params = params  # type: ignore[attr-defined]
+        module.api = api          # type: ignore[attr-defined]
         module.context = context  # type: ignore[attr-defined]
 
-        # 사용자 모듈에서 자주 쓰는 enums 도 주입 (편의)
-        from tickweaver.core.types import (  # local import 로 circular 회피
-            OrderType,
-            PositionSide,
-            Side,
-        )
+        # Convenience enums
+        from tickweaver.core.types import OrderType, PositionSide, Side
 
-        module.Side = Side  # type: ignore[attr-defined]
-        module.OrderType = OrderType  # type: ignore[attr-defined]
+        module.Side = Side                # type: ignore[attr-defined]
+        module.OrderType = OrderType      # type: ignore[attr-defined]
         module.PositionSide = PositionSide  # type: ignore[attr-defined]
 
         self._module = module
-        self._params = params
 
     def call_on_init(self) -> None:
         self._call_optional("on_init")
@@ -106,5 +81,5 @@ class FileStrategy:
             raise StrategyError(f"strategy attribute {name!r} is not callable")
         try:
             fn(*args)
-        except Exception as e:  # 사용자 코드 에러는 명확히 wrap
+        except Exception as e:
             raise StrategyError(f"error in {self.path.name}::{name}: {e}") from e

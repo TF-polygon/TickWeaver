@@ -1,11 +1,18 @@
-"""ema_cross.py — fast EMA / slow EMA 크로스로 진입/청산.
+"""ema_cross.py - fast EMA / slow EMA cross entry + cross exit.
 
-reference: strategies/_reference.md §6.1
-params (ema_cross.json): ema_fast, ema_slow, size_pct
+Reference: strategies/_reference.md
 """
 
 from tickweaver.strategy.indicators import EMA
 
+
+# ── trading parameters (module constants) ───────────────────
+EMA_FAST = 12
+EMA_SLOW = 26
+SIZE_PCT = 0.2
+
+
+# ── state ───────────────────────────────────────────────────
 ema_fast = None
 ema_slow = None
 prev_diff = None
@@ -13,8 +20,8 @@ prev_diff = None
 
 def on_init():
     global ema_fast, ema_slow, prev_diff
-    ema_fast = EMA(period=params.get("ema_fast", 12))
-    ema_slow = EMA(period=params.get("ema_slow", 26))
+    ema_fast = EMA(period=EMA_FAST)
+    ema_slow = EMA(period=EMA_SLOW)
     prev_diff = None
 
 
@@ -35,8 +42,9 @@ def on_bar(bar):
     crossed_down = prev_diff >= 0 and diff < 0
 
     if crossed_up and api.is_flat():
-        size_pct = params.get("size_pct", 0.2)
-        api.market_buy(api.size_from_cash_pct(size_pct, bar.close))
+        qty = api.size_from_cash_pct(SIZE_PCT, bar.close)
+        if qty > 0:
+            api.market_buy(qty)
     elif crossed_down and not api.is_flat():
         api.close_position()
 
@@ -44,6 +52,8 @@ def on_bar(bar):
 
 
 def on_deinit():
-    api.log("ema_cross finished",
-            final_equity=api.equity,
-            position_qty=api.position().qty)
+    api.log(
+        "ema_cross finished",
+        final_equity=api.equity,
+        position_qty=api.position().qty,
+    )

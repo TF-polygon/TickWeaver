@@ -1,0 +1,42 @@
+# tickweaver default backtest config.
+#
+# A single yaml file fully defines one backtest run. Pair it with any
+# strategy (.py) under strategies/. Strategy code owns all trading
+# parameters as module constants -- no json pairing.
+#
+# Usage:
+#   python scripts/run_backtest.py --strategy rsi_mean_reversion
+#   python scripts/run_backtest.py --strategy rsi_mean_reversion --config btc_4h.yaml
+#
+# Cost fields (commission/slippage/spread) use PERCENT units:
+#   0.05 means 0.05%, NOT 5%.
+
+run:
+  initial_capital: 10000.0          # starting cash in quote currency (USDT)
+  mode: spot                        # spot | futures
+  leverage: 1.0                     # used only when mode == futures
+
+data:
+  exchange: binance                 # ccxt exchange id
+  symbol: "BTC/USDT:USDT"           # ccxt symbol notation
+  timeframe: "1h"                   # 1m / 5m / 15m / 1h / 4h / 1d ...
+  start_date: "2024-01-01"          # inclusive (YYYY-MM-DD)
+  end_date:   "2024-07-01"          # exclusive (YYYY-MM-DD)
+
+execution:
+  commission: 0.05                  # 0.05 == 0.05% per side
+  slippage:   0.02                  # 0.02 == 0.02%
+  spread:     0.0                   # 0    == 0.00%   (set >0 for synthetic spread)
+
+tick_synthesis:
+  generator: uniform                # uniform (default) | bridge
+  n_ticks_min: 8                    # synthesized ticks per bar (random in [min, max])
+  n_ticks_max: 256
+  seed: 42                          # deterministic seed (C7 contract)
+
+reporting:
+  out_dir: null                     # null -> reports/<strategy>_<UTC ts>/
+  dump_ticks: 0                     # >0 = dump N sample bars worth of ticks
+
+logging:
+  level: INFO                       # DEBUG | INFO | WARNING | ERROR

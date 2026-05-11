@@ -1,6 +1,0 @@
-{
-  "_comment": "EMA fast/slow cross strategy params",
-  "ema_fast": 12,
-  "ema_slow": 26,
-  "size_pct": 0.2
-}
