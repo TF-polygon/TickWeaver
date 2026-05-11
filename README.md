@@ -15,6 +15,14 @@ data is expensive or has short retention. TickWeaver bridges the gap by
 **synthesizing a plausible intra-bar tick path from OHLC alone**, with strict
 mathematical guarantees so it never contradicts the bar.
 
+![Synthesized ticks catch intra-bar SL/TP fills that close-only backtests miss](intra_bar_fill_comparison.png)
+
+The figure shows the same three bars handled two ways. A bar whose wick
+dips below an SL line while the close stays above never triggers the SL
+in a close-only backtest (left). A synthesized-tick backtest follows a
+plausible path through the bar's `(O, H, L, C)` and catches the SL at
+the wick price (right).
+
 ## Key guarantees (the C1~C7 contract)
 
 For every synthesized tick sequence on a bar `(O, H, L, C)`:
