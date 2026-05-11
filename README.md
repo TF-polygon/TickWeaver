@@ -47,9 +47,14 @@ python scripts/download_data.py --exchange binance --symbol "BTC/USDT:USDT" \
 
 # 3. Run a backtest. --strategy auto-resolves to strategies/<name>.py
 python scripts/run_backtest.py --strategy rsi_mean_reversion
+
+# 4. (optional) Add --viz to open an interactive chart after the run
+pip install -r requirements-viz.txt
+python scripts/run_backtest.py --strategy rsi_mean_reversion --viz
 ```
 
-Open `reports/<strategy>_<UTC ts>/report.html` in a browser.
+Open `reports/<strategy>_<UTC ts>/report.html` in a browser, or pass `--viz`
+to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## What you get
 
@@ -70,6 +75,12 @@ Open `reports/<strategy>_<UTC ts>/report.html` in a browser.
 - **Strategy authoring**: a single `.py` file with optional
   paired `.json` parameters. The engine injects `api`, `params`, and
   `context` into module globals.
+- **Optional chart visualization**: `--viz` opens a finplot window with
+  candles, fill markers, and trade pair lines. Post-hoc only — does not
+  affect backtest determinism.
+- **Fill diagnostic tool**: `scripts/diagnose_fills.py` reports whether
+  each fill landed at a bar boundary or inside a wick, so you can verify
+  empirically that synthesized ticks are being exercised.
 
 ## Strategy file example
 
@@ -111,6 +122,104 @@ python scripts/run_backtest.py --strategy rsi_mean_reversion
 See [`strategies/_reference.md`](strategies/_reference.md) for the full
 API dictionary (signatures, types, patterns, pitfalls).
 
+## Strategy patterns
+
+TickWeaver strategies are file-based modules with five optional lifecycle
+hooks: `on_init`, `on_bar`, `on_tick`, `on_fill`, `on_deinit`. The engine
+calls each only if defined. Two patterns cover most use cases:
+
+### Pattern 1 — `on_bar` only (signal on bar close)
+
+Traditional indicator-based strategies where signals are evaluated when
+each bar closes. Indicators update on `bar.close`, just like a live bot
+that polls closed candles. Orders submitted in `on_bar` fill from the
+first tick of the next bar, so every fill lands at a bar boundary.
+
+Reference: [`strategies/rsi_mean_reversion.py`](strategies/rsi_mean_reversion.py)
+— RSI < 30 entry, RSI > 70 exit.
+
+### Pattern 2 — `on_bar` entry + `on_tick` exit (recommended for SL/TP)
+
+Entry signal is decided on bar close; SL/TP are evaluated on **every
+synthesized tick**, so exits can fire inside a bar's wick at the actual
+price the wick reached — not at bar close. This is where the synthesized
+tick path earns its keep.
+
+Reference: [`strategies/ema_market_sl_tp.py`](strategies/ema_market_sl_tp.py)
+— EMA(12/26) golden cross entry, on_tick SL (-1.0%) / TP (+1.5%) exit.
+
+The diagnostic script below shows the difference empirically: Pattern-1
+records 0% inside-wick fills, while Pattern-2 records a meaningful share
+of fills landing throughout the wick.
+
+## Visualization (optional)
+
+Run any backtest with `--viz` to open an interactive chart after the run
+completes. The chart is post-hoc — it does not interfere with backtest
+decisions, so `--viz` on or off produces bit-exact same `final_equity`.
+
+```bash
+# 1. Install the optional viz extras (PyQt6 + pyqtgraph + finplot)
+pip install -r requirements-viz.txt
+
+# 2. Add --viz to any backtest
+python scripts/run_backtest.py --strategy ema_market_sl_tp --viz
+```
+
+### What you see
+
+- **Candlesticks** — bull green / bear soft red on a dark navy background.
+- **Buy markers** — blue right-pointing triangles (`>`) at each entry fill.
+- **Sell markers** — orange left-pointing triangles (`<`) at each exit fill.
+- **Pair lines** — dashed blue lines connecting each entry to its exit,
+  so round-trip P&L is visible at a glance.
+
+Markers are aligned to the candle column they belong to. The y-coordinate
+is the actual fill price, so when an exit happens inside a wick the marker
+sits visibly within the wick — not at the bar's close.
+
+### Chart controls (finplot defaults)
+
+| Action | Effect |
+|---|---|
+| Scroll wheel | Zoom in / out |
+| Drag | Pan left / right |
+| Double click | Fit view to data |
+
+## Verification: did intra-bar fills actually happen?
+
+A common question: "I'm using synthesized ticks, but are my fills really
+landing inside bars, or are they all at bar boundaries?" Run the diagnostic:
+
+```bash
+python scripts/diagnose_fills.py ema_market_sl_tp
+```
+
+For each fill the script checks whether:
+- the timestamp falls on a bar boundary (matches some bar's close timestamp),
+- the price matches the next bar's open (typical for on_bar + market orders),
+- the price lands strictly inside the bar's wick (open, close, and the L/H
+  range are all checked).
+
+Example summary output:
+
+```
+=== summary ===
+  fill_ts == some bar boundary        : 139/276  ( 50.4%)
+  fill_px ~= next_bar.open            : 155/276  ( 56.2%)
+  fill_px strictly inside wick        : 103/276  ( 37.3%)
+```
+
+Pattern-1 strategies show 100% boundary fills — the synthesizer runs every
+bar but the strategy has no way to consult sub-bar prices. Pattern-2
+strategies show a meaningful `inside_wick` share — that percentage is the
+synthesized tick path doing visible work in your fills.
+
+Raw fill data is written to `reports/<strategy>_<UTC ts>/fills.csv` with
+nanosecond-precision timestamps preserved, so you can also open it in
+Excel or pandas to inspect exactly when in a 1-hour bar a tick-level exit
+was triggered.
+
 ## Architecture (current scope)
 
 ```
@@ -122,9 +231,11 @@ CCXT OHLCV download
        -> strategy.on_tick / on_bar
        -> BacktestBroker (MARKET / LIMIT / STOP / STOP_LIMIT)
   -> analytics
-       -> equity.parquet, trades.parquet, metrics.json
+       -> equity.parquet, trades.parquet, fills.csv, metrics.json
        -> equity_curve.png, sample_tick_paths.png
        -> report.html
+  -> (optional) viz.LiveChartHook
+       -> finplot replay window (V2 determinism preserved)
 ```
 
 ## Documentation

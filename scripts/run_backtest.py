@@ -2,10 +2,11 @@
 
 Only --strategy is required; everything else has defaults.
 --strategy auto-resolves: 'rsi_mean_reversion' -> strategies/rsi_mean_reversion.py.
+--viz opens a finplot window after the backtest finishes (Phase 4 replay).
 
 Examples:
     python scripts/run_backtest.py --strategy rsi_mean_reversion
-    python scripts/run_backtest.py --strategy strategies/my_alpha.py --out-dir reports/run01
+    python scripts/run_backtest.py --strategy rsi_mean_reversion --viz
 """
 
 from __future__ import annotations
@@ -31,8 +32,8 @@ def main(
         ...,
         "--strategy",
         "-s",
-        help="strategy: 'rsi' / 'rsi.py' / 'strategies/rsi.py' / abs path. "
-             "Auto-resolves under strategies/ if no separator.",
+        help="strategy: name / name.py / strategies/name.py / abs path. "
+             "Auto-resolves under strategies/ when no separator.",
     ),
     out_dir: Path | None = typer.Option(
         None,
@@ -64,18 +65,39 @@ def main(
     no_auto_period: bool = typer.Option(
         False,
         "--no-auto-period",
-        help="disable auto-period",
+        help="disable auto-period (use config period.start / period.end)",
     ),
     no_progress: bool = typer.Option(
         False,
         "--no-progress",
         help="disable tqdm progress bar (auto-disabled on non-tty)",
     ),
+    viz: bool = typer.Option(
+        False,
+        "--viz",
+        help="open a finplot replay window after the backtest finishes "
+             "(requires: pip install -r requirements-viz.txt)",
+    ),
 ) -> None:
-    """Run a backtest."""
+    """Run a backtest. Optionally open a replay viewer with --viz."""
     resolved = resolve_strategy_path(strategy)
     if str(resolved) != strategy:
         typer.echo(f"resolved --strategy: {strategy} -> {resolved}")
+
+    chart_hook = None
+    if viz:
+        try:
+            from tickweaver.viz import LiveChartHook
+        except ImportError as e:
+            typer.echo(
+                f"ERROR: failed to import viz module: {e}\n"
+                "Install with: pip install -r requirements-viz.txt"
+            )
+            raise typer.Exit(code=2)
+        # symbol/timeframe filled inside engine via context, but we pass empty
+        # placeholders - the LiveChartHook reads them from recorded bars too.
+        chart_hook = LiveChartHook(symbol="", timeframe="", block=True)
+
     result = run_backtest(
         strategy_path=resolved,
         out_dir=out_dir,
@@ -85,6 +107,7 @@ def main(
         dump_ticks=dump_ticks,
         auto_period=not no_auto_period,
         show_progress=not no_progress,
+        chart_hook=chart_hook,
     )
     typer.echo(
         f"\nfinal_equity = {result.final_equity:.2f} "

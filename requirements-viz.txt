@@ -1,0 +1,9 @@
+# tickweaver visualization (verbose mode) - optional dependency.
+# Install with: pip install -r requirements-viz.txt
+# Or:          pip install -e ".[viz]"
+#
+# These are NOT required for headless backtest / CI.
+
+PyQt6>=6.6
+pyqtgraph>=0.13
+finplot>=1.9

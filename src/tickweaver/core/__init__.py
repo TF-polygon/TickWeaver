@@ -1,4 +1,4 @@
-"""core/ — Protocol/ABC, dataclass, exceptions. 다른 모든 모듈의 최하위 의존."""
+"""core/ - Protocol/ABC, dataclass, exceptions. lowest dependency."""
 
 from tickweaver.core.exceptions import (
     TickweaverError,
