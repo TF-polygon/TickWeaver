@@ -1,6 +1,14 @@
-"""설정 dataclass — pydantic 기반 (P10).
+"""Config dataclass (pydantic) for the backtest runner.
 
-BacktestConfig / StrategySpec 만 정의 (LiveConfig 는 archive 와 함께 동결, D11).
+The yaml file is the single source of truth for one backtest execution:
+  - capital / market mode / leverage
+  - data source (exchange + symbol + timeframe + period)
+  - execution costs (commission / slippage / spread; all in percent units)
+  - tick synthesis (generator / n_ticks_min / n_ticks_max / seed)
+  - reporting + logging
+
+Strategy code (strategies/<name>.py) is the OTHER source of truth -- it owns
+all trading parameters as module constants. No json side-files anymore.
 """
 
 from __future__ import annotations
@@ -9,36 +17,53 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
-
-from tickweaver.core.types import MarketType
+from pydantic import BaseModel, Field
 
 
 class RunSection(BaseModel):
-    initial_cash: float = 10000.0
-    market_type: MarketType = MarketType.USDT_M_PERPETUAL
+    initial_capital: float = 10000.0
+    mode: Literal["spot", "futures"] = "spot"
+    leverage: float = 1.0
 
 
-class PeriodSection(BaseModel):
-    auto: bool = True
-    start: str | None = None
-    end: str | None = None
+class DataSection(BaseModel):
+    exchange: str = "binance"
+    symbol: str = "BTC/USDT:USDT"
+    timeframe: str = "1h"
+    start_date: str = "2024-01-01"   # inclusive (YYYY-MM-DD)
+    end_date: str = "2024-07-01"     # exclusive (YYYY-MM-DD)
+
+
+class ExecutionSection(BaseModel):
+    """All cost fields use PERCENT units (0.05 = 0.05%)."""
+
+    commission: float = 0.05         # 0.05 == 0.05%
+    slippage: float = 0.02
+    spread: float = 0.0
+
+    @property
+    def fee_bps(self) -> float:
+        # internal conversion: % -> bps (1% = 100 bps)
+        return float(self.commission) * 100.0
+
+    @property
+    def slippage_bps(self) -> float:
+        return float(self.slippage) * 100.0
+
+    @property
+    def spread_bps(self) -> float:
+        return float(self.spread) * 100.0
 
 
 class TickSynthesisSection(BaseModel):
     generator: Literal["uniform", "bridge"] = "uniform"
-    n_min: int = 8
-    n_max: int = 256
+    n_ticks_min: int = 8
+    n_ticks_max: int = 256
     seed: int = 42
 
 
-class ExecutionSection(BaseModel):
-    fee_bps: float = 5.0
-    slippage_bps: float = 2.0
-
-
 class ReportingSection(BaseModel):
-    out_dir: str | None = None
+    out_dir: str | None = None       # None -> reports/<strategy>_<UTC ts>/
     dump_ticks: int = 0
 
 
@@ -47,12 +72,12 @@ class LoggingSection(BaseModel):
 
 
 class BacktestConfig(BaseModel):
-    """`configs/backtest/default.yaml` 등의 정적 표현."""
+    """Defined by a single yaml file under configs/."""
 
     run: RunSection = Field(default_factory=RunSection)
-    period: PeriodSection = Field(default_factory=PeriodSection)
-    tick_synthesis: TickSynthesisSection = Field(default_factory=TickSynthesisSection)
+    data: DataSection = Field(default_factory=DataSection)
     execution: ExecutionSection = Field(default_factory=ExecutionSection)
+    tick_synthesis: TickSynthesisSection = Field(default_factory=TickSynthesisSection)
     reporting: ReportingSection = Field(default_factory=ReportingSection)
     logging: LoggingSection = Field(default_factory=LoggingSection)
 
@@ -64,19 +89,3 @@ class BacktestConfig(BaseModel):
 
     def to_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
-
-
-class StrategySpec(BaseModel):
-    """전략 지정. file 모드 (path) 또는 registry 모드 (name) — xor 강제."""
-
-    path: str | None = None
-    params_path: str | None = None
-    name: str | None = None
-
-    @model_validator(mode="after")
-    def _xor(self):
-        has_path = self.path is not None
-        has_name = self.name is not None
-        if has_path == has_name:
-            raise ValueError("StrategySpec: 'path' xor 'name' 중 정확히 하나만 설정해야 합니다.")
-        return self

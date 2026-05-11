@@ -1,5 +1,0 @@
-{
-  "_comment": "복사해서 자신의 전략 옆에 두세요 (예: my_alpha.json). on_bar 안에서 params.get / params.require 로 읽습니다.",
-  "up_threshold": 0.01,
-  "size_pct": 0.1
-}

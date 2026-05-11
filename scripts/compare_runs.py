@@ -98,7 +98,6 @@ def backtest_cmd(
     strategy: Path = typer.Option(..., "--strategy", "-s"),
     config: Path | None = typer.Option(None, "--config", "-c"),
     source: Path | None = typer.Option(None, "--source"),
-    params: Path | None = typer.Option(None, "--params"),
     out_root: Path = typer.Option(
         Path("reports"), "--out-root",
         help="root dir; sub-dirs <strategy>_uniform / <strategy>_bridge created",
@@ -114,11 +113,11 @@ def backtest_cmd(
 
     u_res = run_backtest(
         strategy_path=resolved, out_dir=u_dir, config_path=config,
-        source=source, params_path=params, generator_override="uniform",
+        source=source, generator_override="uniform",
     )
     b_res = run_backtest(
         strategy_path=resolved, out_dir=b_dir, config_path=config,
-        source=source, params_path=params, generator_override="bridge",
+        source=source, generator_override="bridge",
     )
 
     u_m = _load_metrics(u_dir)

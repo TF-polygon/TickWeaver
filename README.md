@@ -72,9 +72,10 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
   and a "Tick Synthesis (proof)" section showing seed and per-bar statistics.
 - **Live `tqdm` progress** with rolling equity update; auto-disabled in
   non-tty (e.g. pytest, CI).
-- **Strategy authoring**: a single `.py` file with optional
-  paired `.json` parameters. The engine injects `api`, `params`, and
-  `context` into module globals.
+- **Strategy authoring**: a single `.py` file. Trading parameters are
+  module constants inside the .py. The engine injects `api` and `context`
+  into module globals. No json side-files — the yaml config under
+  `configs/` defines the environment, the .py defines the strategy.
 - **Optional chart visualization**: `--viz` opens a finplot window with
   candles, fill markers, and trade pair lines. Post-hoc only — does not
   affect backtest determinism.
@@ -88,19 +89,25 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 # strategies/rsi_mean_reversion.py
 from tickweaver.strategy.indicators import RSI
 
+# Trading parameters live as module constants - edit here to tune.
+RSI_PERIOD = 14
+OVERSOLD = 30.0
+OVERBOUGHT = 70.0
+SIZE_PCT = 0.2
+
 rsi = None
 
 def on_init():
     global rsi
-    rsi = RSI(period=params.get("rsi_period", 14))
+    rsi = RSI(period=RSI_PERIOD)
 
 def on_bar(bar):
     rsi.update(bar.close)
     if not rsi.is_warm:
         return
-    if rsi.value < params.get("oversold", 30) and api.is_flat():
-        api.market_buy(api.size_from_cash_pct(0.2, bar.close))
-    elif rsi.value > params.get("overbought", 70) and not api.is_flat():
+    if rsi.value < OVERSOLD and api.is_flat():
+        api.market_buy(api.size_from_cash_pct(SIZE_PCT, bar.close))
+    elif rsi.value > OVERBOUGHT and not api.is_flat():
         api.close_position()
 ```
 
