@@ -65,12 +65,15 @@ python scripts/inspect_data.py inspect data/processed/binance/BTC-USDT-USDT/swap
 
 ## 3. 전략 준비 (2분)
 
-`strategies/_starter.py` 와 `strategies/_starter.json` 을 복사:
+`strategies/_starter.py` 를 복사:
 
 ```powershell
-copy strategies\_starter.py    strategies\my_alpha.py
-copy strategies\_starter.json  strategies\my_alpha.json
+copy strategies\_starter.py  strategies\my_alpha.py
 ```
+
+매매 파라미터 (예: `RSI_PERIOD = 14`) 는 `.py` 파일 상단의 모듈 상수로 들어가
+있습니다 — json 사이드 파일 없음. 환경 설정 (자본 / 종목 / 기간 / 비용 등) 은
+`configs/<env>.yaml` 에 있습니다.
 
 또는 이미 만들어둔 RSI 평균회귀 전략을 그대로 사용:
 
@@ -135,15 +138,14 @@ start reports\rsi_mean_reversion_*\report.html
 
 ## 6. 파라미터 튜닝 (5분)
 
-`strategies/rsi_mean_reversion.json` 편집:
+`strategies/rsi_mean_reversion.py` 상단의 모듈 상수 편집:
 
-```json
-{
-  "rsi_period": 21,
-  "oversold": 25.0,
-  "overbought": 75.0,
-  "size_pct": 0.3
-}
+```python
+# strategies/rsi_mean_reversion.py
+RSI_PERIOD = 21
+OVERSOLD = 25.0
+OVERBOUGHT = 75.0
+SIZE_PCT = 0.3
 ```
 
 다시 실행:
@@ -201,7 +203,7 @@ A. 워밍업 (RSI period+1 봉) 까지 진입 안 함. 데이터가 14봉 미만
 A. `--no-progress` 플래그로 끄세요.
 
 **Q. 매번 다른 결과가 나옵니다.**
-A. 그래선 안 됩니다 (P3 결정성). 같은 seed 면 bit-exact 동일 결과. `configs/backtest/default.yaml` 의 `tick_synthesis.seed` 가 고정인지 확인.
+A. 그래선 안 됩니다 (P3 결정성). 같은 seed 면 bit-exact 동일 결과. `configs/default.yaml` 의 `tick_synthesis.seed` 가 고정인지 확인.
 
 **Q. report.html 의 trades 가 0인데 fills 는 있습니다.**
 A. 라운드트립 (entry → exit) 이 완성된 trade 만 표시. 마지막에 포지션이 열려있으면 그건 미완 trade.

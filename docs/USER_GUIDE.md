@@ -101,11 +101,12 @@ future work (plan.md §5, §13.2). `data/loaders/csv_loader.py`,
 ### 4.1 시작 — `_starter.py` 복사
 
 ```powershell
-copy strategies\_starter.py    strategies\my_alpha.py
-copy strategies\_starter.json  strategies\my_alpha.json
+copy strategies\_starter.py  strategies\my_alpha.py
 ```
 
-`my_alpha.py` 의 `on_bar(bar)` 만 수정해도 굴러갑니다.
+`my_alpha.py` 의 `on_bar(bar)` 만 수정해도 굴러갑니다. 매매 파라미터 (예:
+`RSI_PERIOD = 14`) 는 파일 상단의 모듈 상수로 들어가 있습니다 — json 사이드
+파일 없음.
 
 ### 4.2 5 가지 라이프사이클 훅
 
@@ -119,11 +120,14 @@ copy strategies\_starter.json  strategies\my_alpha.json
 
 ### 4.3 주입 globals
 
-전략 파일은 import 없이 바로 사용:
+전략 파일은 import 없이 `api`, `context` 가 바로 사용 가능. 매매 파라미터는
+파일 상단 모듈 상수로 둠:
+
 ```python
+RSI_PERIOD = 14            # 모듈 상수 — 여기서 튜닝
+
 def on_bar(bar):
     api.market_buy(api.size_from_cash_pct(0.1, bar.close))
-    fast = params.require("ema_fast")
 ```
 
 자세한 패턴은 [`strategy_authoring.md`](strategy_authoring.md), API 사전은
@@ -152,14 +156,12 @@ python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
 
 | 플래그 | 기본값 | 설명 |
 |---|---|---|
-| `--strategy <name>` | (필수) | 전략 (자동 해석) |
+| `--strategy <name>` | (필수) | 전략 (자동 해석 — `name` / `name.py` / `strategies/name.py` / 절대경로) |
+| `--config <path>` | `configs/default.yaml` | 백테스트 환경 yaml. 단순 파일명 입력 시 `configs/` 자동 prefix |
 | `--out-dir <path>` | `reports/<strategy>_<UTC ts>/` | 결과 디렉토리 |
-| `--config <path>` | `configs/backtest/default.yaml` | 백테스트 설정 |
-| `--source <path>` | `data/processed/` 의 최근 mtime | OHLCV parquet |
-| `--params <path>` | `<strategy>.json` 자동 페어링 | 전략 파라미터 |
 | `--dump-ticks N` | `0` | N 개 봉의 tick path 를 dump |
-| `--no-auto-period` | 꺼짐 | period 자동 보정 끄기 |
 | `--no-progress` | 꺼짐 | tqdm 진행 표시줄 끄기 |
+| `--viz` | 꺼짐 | finplot 차트 창 (post-hoc replay) |
 
 ### 5.3 진행 표시
 
@@ -247,13 +249,16 @@ print(trades["holding_hours"].mean())
 
 ### 7.1 단일 변수 sweep
 
-`strategies/<your>.json` 을 편집하고 `--out-dir` 로 결과 분리:
+`strategies/<your>.py` 상단의 모듈 상수 (예: `RSI_PERIOD`) 를 편집하고
+`--out-dir` 로 결과 분리:
 
 ```powershell
-# RSI period 변화
+# rsi_mean_reversion.py 의 RSI_PERIOD = 7
 python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p7
-# rsi_mean_reversion.json 의 rsi_period 를 14 로 바꾼 뒤
+
+# RSI_PERIOD = 14 로 바꾼 뒤
 python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p14
+
 # 21 로 바꾼 뒤
 python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p21
 ```
@@ -335,13 +340,13 @@ def test_alpha_regression(tmp_path):
 | 증상 | 원인 / 해결 |
 |---|---|
 | `download_data` 가 NetworkError | 거래소 API 차단된 네트워크. 다른 네트워크 / VPN 시도 |
-| 결과가 매번 다름 | seed 가 고정 안 됨. `configs/backtest/default.yaml` 의 `tick_synthesis.seed` 확인 |
+| 결과가 매번 다름 | seed 가 고정 안 됨. `configs/default.yaml` 의 `tick_synthesis.seed` 확인 |
 | RSI/EMA value 가 None | 워밍업 미완료. `if not ind.is_warm: return` 가드 추가 |
 | `strategy not found` | 자동 해석 시도 후도 실패. `strategies/<name>.py` 위치 확인 |
 | `final_equity` 가 cash 만큼 작음 | broker 회계 버그 (선물/현물 혼합). 수정됨 — 캐시 갱신 (`find . -name '*.pyc' -delete`) |
 | Windows 에서 .pyc stale | `find <src> -name '*.py' -exec touch {} +` 로 mtime 갱신 |
 | n_trades = 0 인데 fills 있음 | 라운드트립 (entry → exit) 미완. 마지막 포지션 열려있음 |
-| "no data file found" | 먼저 `download_data.py` 실행하거나 `--source <path>` 명시 |
+| 데이터 다운로드 실패 | `configs/default.yaml` 의 `data.exchange`/`symbol`/`timeframe`/`start_date`/`end_date` 확인. 네트워크 / 거래소 차단 가능성도 점검 |
 | progress 출력 + log 가 섞임 | progress 모드에서는 `api.log` 자동 silent. `--no-progress` 로 보임 |
 
 ---
@@ -367,8 +372,8 @@ A. 됩니다 (D13). 결손 봉은 skip 됩니다. `inspect_data inspect <path>` 
 A. [`docs/DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) 의 확장 시나리오 6가지 참고.
 
 **Q. 수수료 / 슬리피지 모델 변경?**
-A. `configs/backtest/default.yaml` 의 `execution.fee_bps`, `execution.slippage_bps`
-편집. bps = basis point = 0.01%. 0 으로 두면 비활성.
+A. `configs/default.yaml` 의 `execution.commission`, `execution.slippage` 편집.
+모두 % 단위 (0.05 = 0.05%). 0 으로 두면 비활성.
 
 **Q. Sharpe 가 너무 높게 나오는데 의심스러워요.**
 A. 짧은 백테스트 (수십~수백 봉) 는 연환산 과대. CAGR 도 마찬가지. 6개월 이상

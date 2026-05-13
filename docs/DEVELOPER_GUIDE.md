@@ -170,7 +170,7 @@ class StochasticRSI:
 
 1. `src/tickweaver/execution/fees.py` 또는 `slippage.py` 에 클래스 추가
 2. `FeeModel` / `SlippageModel` Protocol 만족 (`fee()` / `adjust()`)
-3. `configs/backtest/default.yaml` 에 yaml 키 노출 (필요시)
+3. `configs/default.yaml` 에 yaml 키 노출 (필요시)
 4. runner.py 의 yaml → 객체 매핑 보강
 
 ```python
@@ -405,7 +405,7 @@ A. CCXT 가 이미 지원하면 데이터 다운로드 측면은 즉시 됨 — 
 A. D3 단일 자산 가정이 깊게 박혀 있음 (Position 단수, BacktestBroker 단일 symbol). multi 는 plan.md §13.1 의 future work — `Engine` 과 `Broker` 대대적 수정 필요.
 
 **Q. config yaml 의 새 섹션 추가?**
-A. `utils/config.py` 의 `BacktestConfig` 에 새 dataclass 추가 + `configs/backtest/default.yaml` 갱신.
+A. `utils/config.py` 의 `BacktestConfig` 에 새 dataclass 추가 + `configs/default.yaml` 갱신.
 
 **Q. logger 출력을 file 로 redirect?**
 A. `utils/logger.py` 의 `configure_logging()` 에 file handler 추가. 현재는 stdout 만.

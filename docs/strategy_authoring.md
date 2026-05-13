@@ -12,21 +12,22 @@
 ```
 strategies/
 ├── _starter.py              # 보일러플레이트 (커밋됨, 복사 시작점)
-├── _starter.json            # 파라미터 템플릿
 ├── _reference.md            # API 사전형 레퍼런스
 ├── README.md
 ├── buy_and_hold.py          # 가장 단순한 데모
-├── ema_cross.py + .json     # EMA 크로스
-├── rsi_mean_reversion.py    # RSI 평균회귀
+├── ema_cross.py             # EMA 크로스 (Pattern 1)
+├── rsi_mean_reversion.py    # RSI 평균회귀 (Pattern 1)
+├── ema_market_sl_tp.py      # EMA 진입 + 봉 내부 SL/TP (Pattern 2)
 ├── limit_demo.py            # LIMIT/STOP 데모
-└── my_alpha.py + .json      # 사용자 전략 (gitignore 됨)
+└── my_alpha.py              # 사용자 전략 (gitignore 됨)
 ```
 
 핵심 규칙:
-- `<name>.py` 와 `<name>.json` 이 자동 페어링됩니다 (둘 다 같은 이름).
+- 한 전략 = 하나의 `.py` 파일. 매매 파라미터는 **파일 상단의 모듈 상수**로 둠.
+- 백테스트 환경 (자본 / 종목 / 기간 / 비용) 은 `configs/<env>.yaml` 에 둠.
 - 전역 변수가 EA 글로벌처럼 백테스트 동안 유지됩니다.
 - `on_init`, `on_bar`, `on_tick`, `on_fill`, `on_deinit` 5개 훅 중 필요한 것만 정의.
-- 모듈 globals 에 엔진이 `api`, `params`, `context` 를 자동 주입.
+- 모듈 globals 에 엔진이 `api` 와 `context` 를 자동 주입.
 
 ---
 
@@ -65,13 +66,14 @@ python scripts/run_backtest.py --strategy my_first
 
 ---
 
-## 4. 주입 globals — `api` / `params` / `context`
+## 4. 주입 globals — `api` / `context`
 
-전략 파일은 import 없이 바로 사용:
+전략 파일은 import 없이 바로 사용. 매매 파라미터는 파일 상단의 모듈 상수로 둠:
 
 ```python
+FAST = 12                                    # 매매 파라미터 = 모듈 상수
+
 def on_bar(bar):
-    fast = params.get("ema_fast", 12)        # ParamsView - JSON 페어링 값
     api.market_buy(0.05)                     # StrategyAPI - 주문 게이트웨이
     print(context.symbol, context.bar_index) # StrategyContext - 메타정보
 ```
@@ -79,7 +81,6 @@ def on_bar(bar):
 | 객체 | 타입 | 역할 |
 |---|---|---|
 | `api` | `StrategyAPI` | 주문 / 포지션 / 계정 정보 (`_reference.md` §3) |
-| `params` | `ParamsView` | `<strategy>.json` 의 read-only view (`_reference.md` §4) |
 | `context` | `StrategyContext` | symbol, timeframe, bar_index, now (UTC) |
 
 추가 편의 enum (자동 주입): `Side`, `OrderType`, `PositionSide`.
@@ -105,14 +106,19 @@ def on_bar(bar):
 ```python
 from tickweaver.strategy.indicators import EMA
 
+# Trading parameters as module constants
+EMA_FAST = 12
+EMA_SLOW = 26
+SIZE_PCT = 0.2
+
 ema_fast = None
 ema_slow = None
 prev_diff = None
 
 def on_init():
     global ema_fast, ema_slow, prev_diff
-    ema_fast = EMA(period=params.get("ema_fast", 12))
-    ema_slow = EMA(period=params.get("ema_slow", 26))
+    ema_fast = EMA(period=EMA_FAST)
+    ema_slow = EMA(period=EMA_SLOW)
     prev_diff = None
 
 def on_bar(bar):
@@ -126,7 +132,7 @@ def on_bar(bar):
         prev_diff = diff
         return
     if prev_diff <= 0 < diff and api.is_flat():
-        api.market_buy(api.size_from_cash_pct(0.2, bar.close))
+        api.market_buy(api.size_from_cash_pct(SIZE_PCT, bar.close))
     elif prev_diff >= 0 > diff and not api.is_flat():
         api.close_position()
     prev_diff = diff
@@ -141,19 +147,25 @@ def on_bar(bar):
 ```python
 from tickweaver.strategy.indicators import RSI
 
+# Trading parameters as module constants
+RSI_PERIOD = 14
+OVERSOLD = 30.0
+OVERBOUGHT = 70.0
+SIZE_PCT = 0.2
+
 rsi = None
 
 def on_init():
     global rsi
-    rsi = RSI(period=params.get("rsi_period", 14))
+    rsi = RSI(period=RSI_PERIOD)
 
 def on_bar(bar):
     rsi.update(bar.close)
     if not rsi.is_warm:
         return
-    if rsi.value < params.get("oversold", 30) and api.is_flat():
-        api.market_buy(api.size_from_cash_pct(0.2, bar.close))
-    elif rsi.value > params.get("overbought", 70) and not api.is_flat():
+    if rsi.value < OVERSOLD and api.is_flat():
+        api.market_buy(api.size_from_cash_pct(SIZE_PCT, bar.close))
+    elif rsi.value > OVERBOUGHT and not api.is_flat():
         api.close_position()
 ```
 
@@ -301,28 +313,29 @@ python scripts/run_backtest.py --strategy my_alpha --dump-ticks 5
 
 ## 8. 단위 테스트
 
-전략 코드 자체를 unit test 로 보호하고 싶으면:
+전략 코드 자체를 unit test 로 보호하고 싶으면, 미리 다운로드된 데이터를
+사용하는 별도 yaml 을 만들어 `--config` 로 가리키거나, 동작 한 번을 회귀
+baseline 으로 잠가두는 형태를 권장:
 
 ```python
-# tests/strategies/test_my_alpha.py
-def test_my_alpha_e2e(tmp_path):
-    from tests.fixtures.ohlcv import make_synthetic_ohlcv
-    from tickweaver.data.loaders.parquet_loader import write_parquet
-    from tickweaver.engine.runner import run_backtest
+# tests/strategies/test_my_alpha_regression.py
+import pytest
+from tickweaver.engine.runner import run_backtest
 
-    df = make_synthetic_ohlcv(n_bars=300, seed=42)
-    src = tmp_path / "synthetic.parquet"
-    write_parquet(df, src)
-
+def test_my_alpha_regression(tmp_path):
     res = run_backtest(
         strategy_path="strategies/my_alpha.py",
-        source=src,
+        config_path="configs/default.yaml",
         out_dir=tmp_path / "out",
         show_progress=False,
     )
+    # baseline 은 처음 한 번 측정해서 잠금
+    assert res.final_equity == pytest.approx(10412.78, rel=0, abs=1e-9)
     assert len(res.fills) > 0
-    assert res.final_equity > 0
 ```
+
+`configs/default.yaml` 안의 `tick_synthesis.seed` 가 고정이면 결과는
+bit-exact 재현되므로 회귀 보호에 충분.
 
 ---
 
