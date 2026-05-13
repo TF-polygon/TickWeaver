@@ -37,6 +37,19 @@ def symbol_to_safe(symbol: str) -> str:
     return symbol.replace("/", "-").replace(":", "-")
 
 
+def to_rel_path(p) -> str:
+    """Return path string relative to PROJECT_ROOT with forward slashes.
+
+    Falls back to the original path string if `p` is outside PROJECT_ROOT.
+    Useful for log output where absolute paths add noise.
+    """
+    pp = Path(p)
+    try:
+        return str(pp.relative_to(PROJECT_ROOT)).replace("\\", "/")
+    except ValueError:
+        return str(pp).replace("\\", "/")
+
+
 def _strategies_dir() -> Path:
     """Indirection so tests can monkeypatch STRATEGIES_DIR at runtime."""
     import tickweaver.utils.paths as _self_mod  # late import to read live module attr
