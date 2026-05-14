@@ -38,6 +38,7 @@ from tickweaver.utils.paths import (
     DEFAULT_BACKTEST_CONFIG,
     REPORTS_DIR,
     ensure_runtime_dirs,
+    to_rel_path,
 )
 from tickweaver.utils.seed import SeedManager
 
@@ -130,8 +131,8 @@ def run_backtest(
         symbol=symbol,
         timeframe=timeframe,
         exchange=exchange,
-        start=str(df.index.min()),
-        end=str(df.index.max()),
+        start=df.index.min().strftime("%Y-%m-%d"),
+        end=df.index.max().strftime("%Y-%m-%d"),
     )
 
     strategy_p = Path(strategy_path)
@@ -196,8 +197,8 @@ def run_backtest(
 
     _LOG.info(
         "backtest_done",
-        out_dir=str(out),
-        final_equity=result.final_equity,
+        out_dir=to_rel_path(out),
+        final_equity=round(result.final_equity, 1),
         initial_cash=result.initial_cash,
         n_fills=len(result.fills),
     )

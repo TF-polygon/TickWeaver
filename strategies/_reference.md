@@ -200,108 +200,66 @@ def on_fill(fill):
 ## 3. StrategyAPI 메서드 사전
 
 > 모든 주문 메서드는 **멱등성 키 (`client_order_id`) 가 자동 부여**됩니다. 같은 봉/같은 시그널에서 두 번 호출되면 두 번째는 거부될 수 있으니, "한 시그널 = 한 호출" 패턴을 지키세요.
+>
+> 주문 메서드의 **공통 반환**: `order_id (str)`. `cancel()` 만 `bool` 반환.
+> 모든 `qty` 인자는 내부적으로 `round_qty()` 가 자동 적용됨.
 
 ### 3.1 주문 메서드
 
-#### `api.market_buy(qty: float) -> str`
+| 메서드 | 인자 | 체결 동작 | 슬리피지 |
+|---|---|---|---|
+| `api.market_buy(qty)` | `qty: float` (양수) | 다음 tick 가격에 즉시 체결 | 적용 |
+| `api.market_sell(qty)` | `qty: float` (양수) | 다음 tick 가격에 즉시 체결 (long 청산 또는 short 진입) | 적용 |
+| `api.limit_buy(qty, price)` | `qty`, `price` (목표 매수가) | tick 가격 ≤ `price` 인 첫 tick 에서 **`price` 로** 체결 | 미적용 (maker) |
+| `api.limit_sell(qty, price)` | `qty`, `price` (목표 매도가) | tick 가격 ≥ `price` 인 첫 tick 에서 **`price` 로** 체결 | 미적용 (maker) |
+| `api.stop_buy(qty, stop_price)` | `qty`, `stop_price` (트리거) | tick ≥ `stop_price` 도달 시 시장가 매수로 전환 (브레이크아웃 진입 / 숏 손절) | 적용 |
+| `api.stop_sell(qty, stop_price)` | `qty`, `stop_price` (트리거) | tick ≤ `stop_price` 도달 시 시장가 매도로 전환 (롱 손절) | 적용 |
+| `api.stop_limit_buy(qty, stop_price, limit_price)` | `qty`, `stop_price` (트리거), `limit_price` (체결 한도) | trigger 이후 `limit_buy(qty, limit_price)` 와 동일하게 동작 | 미적용 |
+| `api.stop_limit_sell(qty, stop_price, limit_price)` | `qty`, `stop_price` (트리거), `limit_price` (체결 한도) | trigger 이후 `limit_sell(qty, limit_price)` 와 동일하게 동작 | 미적용 |
+| `api.cancel(order_id)` | `order_id: str` | 대기 중인 주문 취소. 이미 체결됐으면 `False` 반환 | — |
 
-시장가 매수. **다음 tick** 에서 체결 시도.
-
-- `qty`: 양수 float (시장 룰에 자동으로 round_qty 적용)
-- 반환: 주문 ID
-- 슬리피지/수수료는 config 에서 정의된 모델로 자동 적용
+수수료는 모든 체결에 config 의 `commission` 으로 자동 적용. 슬리피지는 위 표의 "적용" 행만 `slippage` 로 자동 적용.
 
 ```python
 api.market_buy(0.05)
+api.limit_buy(0.05, bar.close * 0.997)              # 0.3% 아래 LIMIT BUY
+api.stop_sell(pos.qty, pos.entry_price * 0.99)      # 진입가 -1% 손절 STOP
 ```
-
-#### `api.market_sell(qty: float) -> str`
-
-시장가 매도. 보유 long 을 줄이거나 short 진입.
-
-#### `api.limit_buy(qty: float, price: float) -> str`
-
-지정가 매수. tick 가격이 `price` 이하로 내려오는 첫 tick 에 **`price` 가격으로 체결** (maker, 슬리피지 미적용).
-
-#### `api.limit_sell(qty: float, price: float) -> str`
-
-지정가 매도. tick 가격이 `price` 이상으로 올라오는 첫 tick 에 **`price` 가격으로 체결**.
-
-#### `api.stop_buy(qty: float, stop_price: float) -> str`
-
-스탑 매수. tick 가격이 `stop_price` 이상이 되면 즉시 시장가 매수로 전환 (체결가 = 트리거 시점 tick 가격 + 슬리피지). 보통 브레이크아웃 진입 / 숏 포지션 손절 용도.
-
-#### `api.stop_sell(qty: float, stop_price: float) -> str`
-
-스탑 매도. tick 가격이 `stop_price` 이하가 되면 즉시 시장가 매도로 전환 (체결가 = 트리거 시점 tick 가격 + 슬리피지). 보통 롱 포지션 손절 용도.
-
-#### `api.stop_limit_buy(qty: float, stop_price: float, limit_price: float) -> str`
-
-스탑 + 지정가 매수. tick 가 `stop_price` 이상 도달하면 트리거되고, 그 후 tick 가격이 `limit_price` 이하로 내려오는 첫 tick 에 `limit_price` 가격으로 체결.
-
-#### `api.stop_limit_sell(qty: float, stop_price: float, limit_price: float) -> str`
-
-스탑 + 지정가 매도. tick 가 `stop_price` 이하 도달하면 트리거되고, 그 후 tick 가격이 `limit_price` 이상으로 올라오는 첫 tick 에 `limit_price` 가격으로 체결.
-
-#### `api.cancel(order_id: str) -> bool`
-
-대기 중인 주문 취소. 이미 체결됐으면 `False`.
 
 ---
 
 ### 3.2 청산 메서드
 
-#### `api.close_position() -> Optional[str]`
-
-현재 포지션을 시장가로 닫는다. 포지션이 없으면 `None`.
-보유 방향과 반대인 시장가 주문을 자동 발주.
-
-#### `api.close_all() -> list[str]`
-
-현 단계 D3 (단일 자산) 에서는 사실상 `close_position()` 과 동일. 미래 multi-symbol 확장을 위한 alias.
+| 메서드 | 반환 | 동작 |
+|---|---|---|
+| `api.close_position()` | `order_id (str)` 또는 `None` | 현재 포지션을 보유 방향의 반대 시장가 주문으로 청산. 포지션 없으면 `None` |
+| `api.close_all()` | `list[str]` | 현 단계 D3 (단일 자산) 에서는 사실상 `close_position()` 과 동일. 미래 multi-symbol 확장을 위한 alias |
 
 ---
 
 ### 3.3 조회 메서드 / 프로퍼티
 
-#### `api.position() -> Position`
-
-현재 포지션 객체 반환 (§5.5). 포지션 없으면 `Position(side=PositionSide.FLAT, qty=0, ...)`.
-
-#### `api.is_flat() -> bool`
-
-`api.position().side == PositionSide.FLAT` 의 편의 함수.
-
-#### `api.cash` *(property)*
-
-현재 현금 잔고 (float).
-
-#### `api.equity` *(property)*
-
-현재 총 자산 = `cash + 미실현 PnL`.
+| 이름 | 형태 | 반환 | 비고 |
+|---|---|---|---|
+| `api.position()` | method | `Position` (§5.5) | 포지션 없으면 `Position(side=FLAT, qty=0, ...)` |
+| `api.is_flat()` | method | `bool` | `api.position().side == PositionSide.FLAT` 의 편의 함수 |
+| `api.cash` | property | `float` | 현재 현금 잔고 |
+| `api.equity` | property | `float` | `cash + 미실현 PnL` |
 
 ---
 
 ### 3.4 헬퍼 메서드
 
-#### `api.round_qty(qty: float) -> float`
-
-거래소의 step_size 에 맞춰 반올림. 모든 주문 메서드는 내부적으로 이미 round 하지만, 사이즈 계산을 직접 검증하고 싶을 때 사용.
-
-#### `api.size_from_cash_pct(pct: float, price: float) -> float`
-
-사용 가능 현금의 `pct` 비율 (0~1) 만큼을 가격 `price` 에 살 수 있는 수량 반환. round_qty 자동 적용.
+| 메서드 | 인자 | 반환 | 용도 |
+|---|---|---|---|
+| `api.round_qty(qty)` | `qty: float` | `float` | 거래소 step_size 에 맞춰 내림. 주문 메서드는 내부에서 이미 호출하지만 직접 사이즈 계산을 검증할 때 사용 |
+| `api.size_from_cash_pct(pct, price)` | `pct: float (0~1)`, `price: float` | `float` | `cash × pct ÷ price` 를 `round_qty` 적용해 반환. 자본 곡선에 자동 스케일하는 사이즈 계산 |
+| `api.log(event, **kwargs)` | `event: str`, 임의 `**kwargs` | `None` | 콘솔 로거. 출력: `<ts> [info] [<component>] <event>  key=value ...`. progress 모드에서는 silent (`--no-progress` 로 보임). `report.html` 에는 미반영 |
 
 ```python
 qty = api.size_from_cash_pct(0.1, bar.close)   # 현금의 10%
 api.market_buy(qty)
-```
 
-#### `api.log(msg: str, **kwargs) -> None`
-
-structlog 통합 로거. `report.html` 에는 미반영, 콘솔/로그 파일에만 기록됨.
-
-```python
 api.log("entry signal", price=bar.close, ema=ema_fast.value)
 ```
 
@@ -634,7 +592,7 @@ A. 엔진 레벨에서는 "submit ≠ fill, 다음 tick 에서 체결" 을 강�
 A. `on_bar` 에서 발주한 매수는 다음 봉 첫 tick 에서 체결됩니다. 그 후 `on_tick` 에서 청산 조건이 트리거되면 같은 봉 내부에서 청산도 가능합니다.
 
 **Q. 로그를 report.html 에 띄울 수 있나?**
-A. 현 단계 `api.log` 는 콘솔/structlog 만. report 첨부는 미지원.
+A. 현 단계 `api.log` 는 콘솔 출력만. report 첨부는 미지원.
 
 **Q. 결과 파일 위치?**
 A. `--out-dir` 미지정 시 `reports/<strategy_stem>_<UTC_timestamp>/` 자동 생성 (D17). `report.html`, `metrics.json`, `equity.parquet`, `trades.parquet`, `tick_summary.json` 이 들어옵니다.

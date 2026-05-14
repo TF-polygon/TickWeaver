@@ -93,12 +93,7 @@ def main(
 ) -> None:
     """Run a backtest. Optionally open a replay viewer with --viz."""
     resolved_strategy = resolve_strategy_path(strategy)
-    if str(resolved_strategy) != strategy:
-        typer.echo(f"resolved --strategy: {strategy} -> {resolved_strategy}")
-
     resolved_config = _resolve_config_path(config)
-    if config is not None and str(resolved_config) != config:
-        typer.echo(f"resolved --config: {config} -> {resolved_config}")
 
     chart_hook = None
     if viz:
