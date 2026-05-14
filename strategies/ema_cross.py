@@ -23,6 +23,10 @@ def on_init():
     ema_fast = EMA(period=EMA_FAST)
     ema_slow = EMA(period=EMA_SLOW)
     prev_diff = None
+    # Phase 4 viz: expose both EMAs as overlay lines on the price panel.
+    # Noop when --viz is off (chart_hook is None); strategy logic unchanged.
+    api.bind_indicator("EMA fast", ema_fast)
+    api.bind_indicator("EMA slow", ema_slow)
 
 
 def on_bar(bar):

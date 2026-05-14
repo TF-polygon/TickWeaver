@@ -28,6 +28,9 @@ rsi = None
 def on_init():
     global rsi
     rsi = RSI(period=RSI_PERIOD)
+    # Phase 4 viz: expose RSI on its own sub-panel (RSI.PANEL == 'rsi').
+    # Noop when --viz is off.
+    api.bind_indicator("RSI", rsi)
 
 
 def on_bar(bar):
