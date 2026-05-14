@@ -14,8 +14,11 @@ Viz metadata (Phase 2, dev/adv_verbose):
 - SUBVALUES: None for single-value indicators (.value is a scalar). For
          multi-value indicators, a tuple of sub-line names that the engine
          decomposes into separate IndicatorRegistrationEvents.
-         BollingerBands → ('mid', 'upper', 'lower')
+         BollingerBands → ('middle', 'upper', 'lower')
          MACD          → ('macd', 'signal', 'histogram')
+
+         Sub-names MUST equal the corresponding attribute name on the
+         indicator instance — the engine reads them via getattr(...).
 
 Notes:
 - All indicators are deterministic (P3): same input sequence -> same output.
@@ -319,7 +322,7 @@ class BollingerBands:
     """
 
     PANEL = "price"
-    SUBVALUES: tuple[str, ...] | None = ("mid", "upper", "lower")
+    SUBVALUES: tuple[str, ...] | None = ("middle", "upper", "lower")
 
     def __init__(self, period: int = 20, mult: float = 2.0) -> None:
         if period < 2:

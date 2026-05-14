@@ -155,6 +155,14 @@ def run_backtest(
         chart_hook=chart_hook,
     )
 
+    # Inject metadata into LiveChartHook-shaped hooks so the viz layer can
+    # render symbol/timeframe in titles + description without re-parsing cfg.
+    if chart_hook is not None:
+        if hasattr(chart_hook, "symbol") and not getattr(chart_hook, "symbol"):
+            chart_hook.symbol = symbol
+        if hasattr(chart_hook, "timeframe") and not getattr(chart_hook, "timeframe"):
+            chart_hook.timeframe = timeframe
+
     context = StrategyContext(
         symbol=symbol,
         timeframe=timeframe,

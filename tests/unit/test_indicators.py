@@ -304,7 +304,7 @@ def test_single_value_indicators_have_no_subvalues():
 
 
 def test_bollinger_subvalues_are_mid_upper_lower():
-    assert BollingerBands.SUBVALUES == ("mid", "upper", "lower")
+    assert BollingerBands.SUBVALUES == ("middle", "upper", "lower")
 
 
 def test_macd_subvalues_are_macd_signal_histogram():
@@ -337,7 +337,7 @@ def test_bollinger_subvalue_extraction_alignment():
     bb.update(11.0)
     bb.update(12.0)  # warm
     # SUBVALUES order matches the canonical (mid, upper, lower).
-    assert BollingerBands.SUBVALUES[0] == "mid"
+    assert BollingerBands.SUBVALUES[0] == "middle"
     assert BollingerBands.SUBVALUES[1] == "upper"
     assert BollingerBands.SUBVALUES[2] == "lower"
     # Properties are available for engine extraction.

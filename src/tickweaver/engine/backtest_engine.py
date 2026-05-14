@@ -168,8 +168,11 @@ class BacktestEngine:
                 bar: OHLCBar = ev.bar
                 self.context.bar_index = bar_idx
                 self.context.now = bar.timestamp
-                # Keep StrategyAPI bar_index in sync for api.comment()
-                if hasattr(self.api, "_set_bar_index"):
+                # Keep StrategyAPI bar context in sync for api.comment() and
+                # api.plot() / api._sample_indicators() (Phase 3).
+                if hasattr(self.api, "_set_bar_context"):
+                    self.api._set_bar_context(bar_idx, bar.timestamp)
+                elif hasattr(self.api, "_set_bar_index"):
                     self.api._set_bar_index(bar_idx)
 
                 # 1. synthesize ticks
@@ -209,6 +212,10 @@ class BacktestEngine:
 
                 # 3. on_bar (after the bar closed)
                 self.strategy.call_on_bar(bar)
+                # Sample bound indicators after the strategy had a chance to
+                # update them inside on_bar. (Phase 3: viz indicator tracks.)
+                if hasattr(self.api, "_sample_indicators"):
+                    self.api._sample_indicators(bar_idx, bar.timestamp)
                 self.chart_hook.on_bar(bar, bar_idx)
 
                 # progress postfix every 100 bars

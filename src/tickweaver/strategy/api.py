@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
@@ -20,11 +21,29 @@ from tickweaver.core.types import (
 )
 from tickweaver.execution.backtest_broker import BacktestBroker
 from tickweaver.utils.logger import get_logger
+from tickweaver.viz.events import (
+    IndicatorRegistrationEvent,
+    IndicatorSampleEvent,
+)
 
 if TYPE_CHECKING:
     from tickweaver.viz.hook import ChartHook
 
 
+@dataclass
+class _IndicatorBinding:
+    """Internal record of an api.bind_indicator(...) call.
+
+    - name: full sub-line name, e.g. "EMA fast" (single) or "BB.middle" (sub).
+    - indicator: the streaming indicator instance the strategy uses.
+    - sub_attr: None for single-value (engine reads .value). For multi-value
+                indicators, the attribute name on the indicator to read
+                (e.g. 'middle' for BB, 'macd' for MACD).
+    """
+
+    name: str
+    indicator: Any
+    sub_attr: str | None
 
 
 class StrategyAPI:
@@ -45,12 +64,24 @@ class StrategyAPI:
         self._log = get_logger("strategy")
         self._console_log = bool(console_log)
         self._chart_hook = chart_hook
-        # bar_index is updated by the engine via set_bar_index.
+        # bar context is updated by the engine each bar.
         self._current_bar_index: int = 0
+        self._current_bar_timestamp: pd.Timestamp | None = None
+        # Phase 3: indicator bindings + names already registered via plot().
+        self._indicator_bindings: list[_IndicatorBinding] = []
+        self._plot_registered: set[str] = set()
 
     def _set_bar_index(self, bar_index: int) -> None:
         # Engine-only call to keep comment() bar_index accurate.
         self._current_bar_index = int(bar_index)
+
+    def _set_bar_context(
+        self, bar_index: int, timestamp: pd.Timestamp | None
+    ) -> None:
+        # Engine-only call: keeps both bar_index and timestamp current so
+        # api.plot() and api._sample_indicators() can stamp samples correctly.
+        self._current_bar_index = int(bar_index)
+        self._current_bar_timestamp = timestamp
 
     # ---- orders ----
     def market_buy(self, qty: float) -> str:
@@ -155,6 +186,163 @@ class StrategyAPI:
         if self._chart_hook is None:
             return
         self._chart_hook.on_comment(str(text), self._current_bar_index)
+
+    # ---- indicator visualization (Phase 3) ----
+    def bind_indicator(
+        self,
+        name: str,
+        indicator: Any,
+        panel: str | None = None,
+        **style: Any,
+    ) -> None:
+        """Register an indicator object for automatic per-bar sampling.
+
+        Idempotent: a second call with the same `name` (and an already-bound
+        indicator) is a NO-OP, so a stray bind_indicator() inside on_bar
+        does not compound per-bar samples. The chart hook still receives an
+        updated registration so style/panel changes take effect; sample
+        bindings stay deduplicated.
+
+        The engine reads each binding once per bar (after strategy.on_bar)
+        and forwards the current value to chart_hook.on_indicator_sample.
+
+        Layout:
+            - panel: defaults to indicator.PANEL. Override per-call to remap.
+              "price" overlays on the candlestick axis; any other id opens
+              a separate sub-panel row.
+            - Multi-value indicators (BollingerBands, MACD): SUBVALUES is a
+              tuple of attribute names that the engine decomposes into one
+              sub-line per entry, named "<name>.<sub>" (e.g. "BB.middle").
+
+        Style kwargs:
+            color, width, style (line style) - passed through to the
+            live_window renderer. Unknown keys are ignored.
+
+        Noop when chart_hook is None (viz disabled): strategies stay valid
+        without changes whether --viz is on or off.
+        """
+        if self._chart_hook is None:
+            return
+        resolved_panel = (
+            panel if panel is not None else getattr(indicator, "PANEL", "price")
+        )
+        sub_values = getattr(indicator, "SUBVALUES", None)
+        style_dict = dict(style)
+        # Pre-compute the target sample names for dedup.
+        target_names = (
+            [name]
+            if sub_values is None
+            else [f"{name}.{sub}" for sub in sub_values]
+        )
+        existing_names = {b.name for b in self._indicator_bindings}
+        already_bound = all(n in existing_names for n in target_names)
+
+        if sub_values is None:
+            if not already_bound:
+                self._indicator_bindings.append(
+                    _IndicatorBinding(name=name, indicator=indicator, sub_attr=None)
+                )
+            # Always forward the registration so the chart hook can apply
+            # last-write-wins for panel/style updates.
+            self._chart_hook.on_indicator_register(
+                IndicatorRegistrationEvent(
+                    name=name, panel=resolved_panel, style=style_dict
+                )
+            )
+        else:
+            for sub_attr in sub_values:
+                full_name = f"{name}.{sub_attr}"
+                if not already_bound:
+                    self._indicator_bindings.append(
+                        _IndicatorBinding(
+                            name=full_name, indicator=indicator, sub_attr=sub_attr
+                        )
+                    )
+                self._chart_hook.on_indicator_register(
+                    IndicatorRegistrationEvent(
+                        name=full_name, panel=resolved_panel, style=style_dict
+                    )
+                )
+
+    def plot(
+        self,
+        name: str,
+        value: float,
+        panel: str = "price",
+        **style: Any,
+    ) -> None:
+        """Low-level fallback: emit a one-shot sample without binding.
+
+        Useful for externally computed values, ad-hoc signals, or non-streaming
+        indicators that do not expose PANEL/SUBVALUES. First call for a given
+        `name` auto-registers the track (panel + style); subsequent calls only
+        emit samples, ignoring further panel/style hints.
+
+        Noop when chart_hook is None.
+        """
+        if self._chart_hook is None:
+            return
+        if name not in self._plot_registered:
+            self._chart_hook.on_indicator_register(
+                IndicatorRegistrationEvent(
+                    name=name, panel=panel, style=dict(style)
+                )
+            )
+            self._plot_registered.add(name)
+        self._chart_hook.on_indicator_sample(
+            IndicatorSampleEvent(
+                name=name,
+                bar_index=self._current_bar_index,
+                timestamp=self._current_bar_timestamp,
+                value=float(value),
+            )
+        )
+
+    def _sample_indicators(
+        self, bar_index: int, timestamp: pd.Timestamp | None
+    ) -> None:
+        """Engine-only: emit one sample per bound indicator line.
+
+        Called after strategy.on_bar(bar) so any update() the strategy did
+        inside on_bar is already reflected in indicator.value.
+
+        Warm-up handling: if the value is None (not yet warm) or not a finite
+        scalar, the sample is skipped for that line - the viewer will start
+        the line at the first warm bar.
+        """
+        if self._chart_hook is None or not self._indicator_bindings:
+            return
+        for b in self._indicator_bindings:
+            # viz is a read-only observer (V2): a strategy-side .value
+            # property that raises must NEVER crash the engine. Skip that
+            # binding for this bar and continue.
+            try:
+                if b.sub_attr is None:
+                    raw = getattr(b.indicator, "value", None)
+                else:
+                    raw = getattr(b.indicator, b.sub_attr, None)
+            except Exception as e:
+                self._log.warning(
+                    "indicator_value_raised",
+                    name=b.name,
+                    error=type(e).__name__,
+                )
+                continue
+            if raw is None:
+                continue
+            if not isinstance(raw, (int, float)):
+                continue
+            # Skip NaN / inf to avoid breaking finplot line segments.
+            if isinstance(raw, float) and not math.isfinite(raw):
+                continue
+            self._chart_hook.on_indicator_sample(
+                IndicatorSampleEvent(
+                    name=b.name,
+                    bar_index=int(bar_index),
+                    timestamp=timestamp,
+                    value=float(raw),
+                )
+            )
 
     # ---- internal ----
     def _submit(
