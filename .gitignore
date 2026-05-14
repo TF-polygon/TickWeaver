@@ -38,18 +38,3 @@ Thumbs.db
 plans/
 plan.md
 plan_viz.md
-
-# user strategies — keep only the templates, reference doc, and demo strategies
-strategies/*
-!strategies/_starter.py
-!strategies/_starter.json
-!strategies/_reference.md
-!strategies/README.md
-
-# example
-!strategies/buy_and_hold.py
-!strategies/ema_cross.py
-!strategies/ema_cross.json
-!strategies/limit_demo.py
-!strategies/rsi_mean_reversion.py
-!strategies/rsi_mean_reversion.json
