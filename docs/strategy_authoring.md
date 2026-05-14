@@ -223,6 +223,23 @@ def on_tick(tick):
 
 `on_tick` 을 사용하면 봉 내부 합성 tick 경로에 따라 결과가 달라집니다 (compare_runs 비교 시 차이 발현).
 
+### 5.X 지표 시각화 (`--viz`)
+
+전략에서 쓰는 indicator를 차트에 한 줄로 노출:
+
+```python
+def on_init():
+    global ema, rsi
+    ema = EMA(period=20)
+    rsi = RSI(period=14)
+    api.bind_indicator("EMA 20", ema)    # PANEL='price' (default) → candle overlay
+    api.bind_indicator("RSI",    rsi)    # PANEL='rsi'   (default) → sub-panel
+```
+
+- `--viz` 가 꺼져 있으면 모든 viz 호출은 noop이므로 production 코드에 그대로 두어도 안전.
+- Indicator 클래스는 `PANEL`(필수, str) + `SUBVALUES`(`None` 또는 tuple) 메타데이터를 가져야 함. 기본 6종 (`SMA` / `EMA` / `RSI` / `ATR` / `MACD` / `BollingerBands`) 은 이미 정의됨.
+- 커스텀 indicator 작성, multi-value 분해 (BB / MACD), style override (`color=`/`width=`), 외부 계산값 fallback (`api.plot(name, value)`) — 자세한 계약과 함정 체크리스트는 [`strategies/_reference.md` §9](../strategies/_reference.md#9-지표-시각화---viz) 참고.
+
 ---
 
 ## 6. 흔한 함정

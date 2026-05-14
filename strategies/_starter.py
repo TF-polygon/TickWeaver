@@ -5,11 +5,29 @@ The yaml config under configs/ defines the backtest environment; this .py
 file owns the trading parameters as module constants.
 
 The engine injects three globals at module load:
-  api    : StrategyAPI    - orders / positions / queries / helpers
+  api    : StrategyAPI    - orders / positions / queries / helpers / viz
   context: StrategyContext - symbol / timeframe / bar_index
   + Side / OrderType / PositionSide enums (convenience)
 
 Do NOT import or assign api/context yourself. The engine wires them.
+
+Visualization (only takes effect when run with --viz):
+  api.bind_indicator(name, indicator)  one-line binding for any streaming
+                                       indicator from tickweaver.strategy.indicators.
+                                       The engine auto-samples .value each bar
+                                       and draws it on the chart. Multi-value
+                                       indicators (BollingerBands, MACD) are
+                                       decomposed into sub-lines (e.g.
+                                       "BB.middle", "BB.upper", ...).
+                                       Default panel comes from indicator.PANEL
+                                       ("price" overlay vs sub-panel id).
+                                       Idempotent: safe to call multiple times.
+  api.plot(name, value)                low-level fallback when you compute a
+                                       value externally and just want a line.
+  api.comment(text)                    top-left chart text (multi-line OK).
+
+All three are no-ops when chart_hook is disabled, so strategies stay valid
+whether --viz is on or off.
 
 Reference: strategies/_reference.md
 """
@@ -48,6 +66,17 @@ def on_init():
     global prev_close, trade_count
     prev_close = 0.0
     trade_count = 0
+
+    # Optional --viz: expose streaming indicators so they render on the chart.
+    # Noop when --viz is off; remove the commented block to keep the file lean.
+    #
+    #   from tickweaver.strategy.indicators import EMA, RSI
+    #   global ema_fast, rsi
+    #   ema_fast = EMA(period=20)
+    #   rsi      = RSI(period=14)
+    #   api.bind_indicator("EMA 20", ema_fast)   # overlay on price (default)
+    #   api.bind_indicator("RSI",    rsi)        # sub-panel (RSI.PANEL='rsi')
+
     api.log("strategy initialized")
 
 

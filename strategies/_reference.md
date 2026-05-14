@@ -24,6 +24,7 @@
 6. [자주 쓰는 패턴](#6-자주-쓰는-패턴)
 7. [함정과 주의사항](#7-함정과-주의사항)
 8. [FAQ](#8-faq)
+9. [지표 시각화 (`--viz`)](#9-지표-시각화---viz)
 
 ---
 
@@ -596,6 +597,140 @@ A. 현 단계 `api.log` 는 콘솔 출력만. report 첨부는 미지원.
 
 **Q. 결과 파일 위치?**
 A. `--out-dir` 미지정 시 `reports/<strategy_stem>_<UTC_timestamp>/` 자동 생성 (D17). `report.html`, `metrics.json`, `equity.parquet`, `trades.parquet`, `tick_summary.json` 이 들어옵니다.
+
+---
+
+## 9. 지표 시각화 (`--viz`)
+
+### 9.1 개념
+
+전략에서 사용하는 streaming indicator (`EMA` / `RSI` / `BollingerBands` / 커스텀 등) 를 차트에 라인으로 표시합니다. `--viz` 플래그가 없으면 모든 viz 호출은 noop이므로 production 전략에 그대로 두어도 안전합니다.
+
+```python
+def on_init():
+    global ema
+    ema = EMA(period=20)
+    api.bind_indicator("EMA 20", ema)   # 한 줄로 등록
+
+def on_bar(bar):
+    ema.update(bar.close)               # 일반 indicator 사용
+                                        # 엔진이 매 bar 끝에 .value 를 자동 sampling
+```
+
+### 9.2 Indicator 계약
+
+viz layer가 indicator 객체에 요구하는 인터페이스:
+
+| 항목 | 종류 | 역할 |
+|---|---|---|
+| `PANEL` | class variable, str | `"price"` 면 캔들 위에 overlay, 그 외 문자열이면 그 id 의 sub-panel |
+| `SUBVALUES` | class variable, `tuple[str, ...] \| None` | `None` = single-value (`.value` 만 사용), tuple = multi-value (각 원소가 attribute 이름이어야 함) |
+| `.value` | attribute / property | single-value일 때 매 bar 의 최신 값. `None` 이면 warm-up 미완으로 간주해서 skip. NaN / inf 도 자동 skip |
+| `getattr(self, sub)` for `sub` in `SUBVALUES` | property/attribute | multi-value일 때 각 sub-line 의 값 |
+
+> `update(...)` 시그니처는 viz 가 강제하지 않습니다. strategy 가 알아서 호출 (`.update(bar.close)`, `.update_bar(bar)`, `.update(h, l, c)` 등).
+
+### 9.3 기본 6 종 indicator 의 default 메타데이터
+
+| 클래스 | `PANEL` | `SUBVALUES` |
+|---|---|---|
+| `SMA` | `"price"` | `None` |
+| `EMA` | `"price"` | `None` |
+| `RSI` | `"rsi"` | `None` |
+| `ATR` | `"atr"` | `None` |
+| `MACD` | `"macd"` | `("macd", "signal", "histogram")` |
+| `BollingerBands` | `"price"` | `("middle", "upper", "lower")` |
+
+### 9.4 커스텀 indicator 작성
+
+**single-value** — 봉의 진폭 (`high - low`)
+
+```python
+class BarRange:
+    PANEL = "price"
+    SUBVALUES = None
+
+    def __init__(self):
+        self._value = None
+
+    def update_bar(self, bar):
+        self._value = float(bar.high - bar.low)
+
+    @property
+    def value(self):
+        return self._value
+```
+
+**multi-value** — Keltner Channel
+
+```python
+class KeltnerChannel:
+    PANEL = "price"
+    SUBVALUES = ("middle", "upper", "lower")   # attribute 이름과 정확히 일치
+
+    def __init__(self, period=20, k=2.0):
+        self.period = period
+        self.k = k
+        self._mid = None
+        self._upper = None
+        self._lower = None
+
+    def update_bar(self, bar):
+        ...  # 계산 후 self._mid / self._upper / self._lower 갱신
+
+    @property
+    def middle(self): return self._mid
+
+    @property
+    def upper(self):  return self._upper
+
+    @property
+    def lower(self):  return self._lower
+```
+
+`api.bind_indicator("KC", kc)` 한 번 호출하면 `"KC.middle"`, `"KC.upper"`, `"KC.lower"` 세 sub-line 이 자동 생성, 같은 panel 에 묶입니다.
+
+### 9.5 Style override
+
+```python
+api.bind_indicator("EMA 20", ema, color="#FF9800", width=2)
+api.bind_indicator("RSI",    rsi, panel="oscillators")   # PANEL 디폴트 덮어쓰기
+```
+
+지원 키:
+
+- `color` — hex 색상 (예: `"#FF9800"`)
+- `width` — line 두께 (정수)
+- `style` — pyqtgraph line style (`"--"`, finplot 버전에 따라 무시될 수 있음)
+
+생략 시 자동 팔레트 (8색 사이클; BUY/SELL 파랑·주황 회피) 에서 결정성 있게 할당.
+
+### 9.6 외부 계산값 fallback — `api.plot`
+
+streaming 클래스를 만들 정도가 아닌 임시 signal 시각화:
+
+```python
+def on_bar(bar):
+    score = some_external_score(bar)
+    api.plot("score", score, panel="score_panel", color="#E91E63")
+```
+
+첫 호출에 자동 register, 이후엔 sample 만 emit. `bind_indicator` 와 달리 `PANEL` 계약을 안 거치고 직접 `panel=` 인자로 지정.
+
+### 9.7 함정 체크리스트
+
+| 함정 | 증상 | 회피 |
+|---|---|---|
+| `SUBVALUES` 의 sub 이름이 attribute 와 불일치 | sub-line 이 빈 라인 (sample skip) | `SUBVALUES = ("middle",)` 이면 `self.middle` 또는 `@property middle` 존재 필수 |
+| `.value` 가 tuple 인데 `SUBVALUES = None` | sample 자동 skip (scalar 아님) | multi-value 면 `SUBVALUES` 정의 필수 |
+| `.value` property 에서 raise | sample skip + WARNING 로그 — backtest 는 안 깨짐 | property 안 코드 방어적으로 |
+| `bind_indicator` 를 `on_bar` 에서 호출 | idempotent 라 안전하지만 의도 불명 | `on_init` 에 두는 것이 관습 |
+| `PANEL` 안 정의 | `"price"` overlay 로 fallback | oscillator 처럼 단위가 다르면 명시 권장 |
+| viz off / on 결과 비교 안 함 | viz 가 backtest 결과를 바꾸는지 미검증 | `--viz` 켜고 끄고 둘 다 돌려서 `final_equity` / fills 일치 확인 |
+
+### 9.8 결정성 (V2) 보장
+
+`chart_hook=None` (즉 `--viz` 없는 실행) 일 때 모든 viz 호출은 noop. `bind_indicator` / `plot` 어느 쪽도 internal state 를 누적하지 않습니다. 따라서 `--viz` 켜고 끈 backtest 의 `final_equity` / fills 는 비트-정확하게 동일해야 합니다. 어긋난다면 indicator 의 `.value` 가 viz 경로에서만 발동하는 부작용을 일으키는 구현일 가능성 — indicator 본문 다시 점검.
 
 ---
 
