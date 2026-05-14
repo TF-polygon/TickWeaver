@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from tickweaver.core.types import Fill, OHLCBar, Tick
+    from tickweaver.viz.events import (
+        IndicatorRegistrationEvent,
+        IndicatorSampleEvent,
+    )
 
 
 class ChartHook(ABC):
@@ -37,6 +41,15 @@ class ChartHook(ABC):
     @abstractmethod
     def on_deinit(self, final_equity: float) -> None: ...
 
+    # Phase 1 (dev/adv_verbose) — indicator visualization
+    @abstractmethod
+    def on_indicator_register(
+        self, registration: "IndicatorRegistrationEvent"
+    ) -> None: ...
+
+    @abstractmethod
+    def on_indicator_sample(self, sample: "IndicatorSampleEvent") -> None: ...
+
 
 class NullHook(ChartHook):
     """No-op hook. Default when viz is disabled."""
@@ -57,4 +70,10 @@ class NullHook(ChartHook):
         pass
 
     def on_deinit(self, final_equity):
+        pass
+
+    def on_indicator_register(self, registration):
+        pass
+
+    def on_indicator_sample(self, sample):
         pass

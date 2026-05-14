@@ -10,11 +10,22 @@ from __future__ import annotations
 from collections import deque
 from typing import TYPE_CHECKING
 
-from tickweaver.viz.events import CommentEvent
+from tickweaver.viz.events import (
+    CommentEvent,
+    IndicatorRegistrationEvent,
+    IndicatorSampleEvent,
+    IndicatorTrack,
+)
 from tickweaver.viz.hook import ChartHook
 
 if TYPE_CHECKING:
     from tickweaver.core.types import Fill, OHLCBar, Tick
+
+
+# Default panel used when api.plot(...) (or a stray on_indicator_sample) fires
+# before an explicit on_indicator_register. Matches the most common case:
+# overlay onto the candlestick axis.
+_DEFAULT_PANEL = "price"
 
 
 class EventRecorder(ChartHook):
@@ -30,6 +41,8 @@ class EventRecorder(ChartHook):
         self.fills: list["Fill"] = []
         self.comments: list[CommentEvent] = []
         self.ticks: deque["Tick"] = deque(maxlen=max_ticks)
+        # Phase 1: indicator tracks keyed by indicator name.
+        self.indicators: dict[str, IndicatorTrack] = {}
         self._final_equity: float | None = None
         self._init_called: bool = False
         self._deinit_called: bool = False
@@ -58,6 +71,37 @@ class EventRecorder(ChartHook):
         self._final_equity = float(final_equity)
         self._deinit_called = True
 
+    # ---- Phase 1: indicator visualization ----
+    def on_indicator_register(self, registration: IndicatorRegistrationEvent) -> None:
+        """Register an indicator track. Last-write-wins for duplicate names.
+
+        Existing samples (if any) are preserved across re-registration so
+        strategies may refresh style hints mid-run without losing history.
+        """
+        existing = self.indicators.get(registration.name)
+        if existing is None:
+            self.indicators[registration.name] = IndicatorTrack(
+                registration=registration, samples=[]
+            )
+        else:
+            # Preserve samples list identity; only swap the registration.
+            existing.registration = registration
+
+    def on_indicator_sample(self, sample: IndicatorSampleEvent) -> None:
+        """Append a sample. Auto-creates a default track if name is unseen.
+
+        The auto-create path supports api.plot(...) where a strategy may emit
+        values without a prior bind_indicator(...).
+        """
+        track = self.indicators.get(sample.name)
+        if track is None:
+            auto_reg = IndicatorRegistrationEvent(
+                name=sample.name, panel=_DEFAULT_PANEL, style={}
+            )
+            track = IndicatorTrack(registration=auto_reg, samples=[])
+            self.indicators[sample.name] = track
+        track.samples.append(sample)
+
     @property
     def final_equity(self) -> float | None:
         return self._final_equity
@@ -77,3 +121,7 @@ class EventRecorder(ChartHook):
     @property
     def n_ticks(self) -> int:
         return len(self.ticks)
+
+    @property
+    def n_indicators(self) -> int:
+        return len(self.indicators)
