@@ -266,3 +266,92 @@ def test_indicators_count_based_not_time_based():
     for v in (10.0, 20.0, 30.0, 40.0, 50.0):
         sma_b.update(v)
     assert sma_a.value == sma_b.value
+
+
+# ─────────────────────────────────────────────────────────
+# Phase 2 (dev/adv_verbose) — viz metadata: PANEL + SUBVALUES
+# ─────────────────────────────────────────────────────────
+def test_sma_panel_is_price():
+    assert SMA.PANEL == "price"
+
+
+def test_ema_panel_is_price():
+    assert EMA.PANEL == "price"
+
+
+def test_bollinger_panel_is_price():
+    assert BollingerBands.PANEL == "price"
+
+
+def test_rsi_panel_is_rsi():
+    assert RSI.PANEL == "rsi"
+
+
+def test_macd_panel_is_macd():
+    assert MACD.PANEL == "macd"
+
+
+def test_atr_panel_is_atr():
+    assert ATR.PANEL == "atr"
+
+
+def test_single_value_indicators_have_no_subvalues():
+    """Single-value indicators expose SUBVALUES=None to signal 'just .value'."""
+    assert SMA.SUBVALUES is None
+    assert EMA.SUBVALUES is None
+    assert RSI.SUBVALUES is None
+    assert ATR.SUBVALUES is None
+
+
+def test_bollinger_subvalues_are_mid_upper_lower():
+    assert BollingerBands.SUBVALUES == ("mid", "upper", "lower")
+
+
+def test_macd_subvalues_are_macd_signal_histogram():
+    assert MACD.SUBVALUES == ("macd", "signal", "histogram")
+
+
+def test_panel_is_class_level_not_instance():
+    """PANEL must be a class attribute, not set per-instance — so the engine
+    can read indicator.PANEL or type(indicator).PANEL interchangeably."""
+    e = EMA(period=10)
+    assert type(e).PANEL == "price"
+    # Reading via instance should also work (descriptor lookup goes to class).
+    assert e.PANEL == "price"
+
+
+def test_bollinger_subvalue_extraction_alignment():
+    """Demonstrates how the engine will decompose a BB instance.
+
+    The SUBVALUES tuple must align with the .middle / .upper / .lower
+    properties so engine integration (Phase 3) can do something like:
+
+        for sub in BollingerBands.SUBVALUES:
+            value = getattr(bb, _BB_ATTR_MAP[sub])
+
+    For BB the mapping is identity: 'mid' -> .middle, 'upper' -> .upper,
+    'lower' -> .lower. This test pins that contract.
+    """
+    bb = BollingerBands(period=3, mult=2.0)
+    bb.update(10.0)
+    bb.update(11.0)
+    bb.update(12.0)  # warm
+    # SUBVALUES order matches the canonical (mid, upper, lower).
+    assert BollingerBands.SUBVALUES[0] == "mid"
+    assert BollingerBands.SUBVALUES[1] == "upper"
+    assert BollingerBands.SUBVALUES[2] == "lower"
+    # Properties are available for engine extraction.
+    assert bb.middle is not None
+    assert bb.upper is not None
+    assert bb.lower is not None
+    assert bb.upper > bb.middle > bb.lower
+
+
+def test_macd_subvalue_extraction_alignment():
+    m = MACD(fast=3, slow=5, signal=2)
+    for v in [10.0, 11.0, 12.0, 11.5, 11.8, 12.5, 13.0, 12.7]:
+        m.update(v)
+    assert MACD.SUBVALUES == ("macd", "signal", "histogram")
+    assert m.macd is not None
+    assert m.signal is not None
+    assert m.histogram is not None

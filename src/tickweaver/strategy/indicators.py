@@ -6,6 +6,17 @@ All indicators share a common contract:
 - .is_warm property — bool
 - .reset() — clears state for re-use across runs
 
+Viz metadata (Phase 2, dev/adv_verbose):
+- PANEL: class variable, "price" for overlay-on-candlestick indicators
+         (SMA / EMA / BollingerBands) or a unique panel id for sub-panels
+         (RSI / MACD / ATR). The engine reads this when api.bind_indicator(...)
+         is called without an explicit panel= override.
+- SUBVALUES: None for single-value indicators (.value is a scalar). For
+         multi-value indicators, a tuple of sub-line names that the engine
+         decomposes into separate IndicatorRegistrationEvents.
+         BollingerBands → ('mid', 'upper', 'lower')
+         MACD          → ('macd', 'signal', 'histogram')
+
 Notes:
 - All indicators are deterministic (P3): same input sequence -> same output.
 - ATR uses bar-level data (high, low, close); the rest take a single price.
@@ -26,6 +37,9 @@ import numpy as np
 # ---------------------------------------------------------------------------
 class SMA:
     """Rolling arithmetic mean over the last `period` updates."""
+
+    PANEL = "price"
+    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int) -> None:
         if period < 1:
@@ -64,6 +78,9 @@ class SMA:
 # ---------------------------------------------------------------------------
 class EMA:
     """EMA seeded with SMA over the first `period` values, then alpha smoothed."""
+
+    PANEL = "price"
+    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int) -> None:
         if period < 1:
@@ -105,6 +122,9 @@ class RSI:
 
     Warm-up takes period + 1 prices (need `period` deltas). value in [0, 100].
     """
+
+    PANEL = "rsi"
+    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int = 14) -> None:
         if period < 2:
@@ -181,6 +201,9 @@ class ATR:
     Use update_bar(bar) for OHLCBar, or update(high, low, close).
     """
 
+    PANEL = "atr"
+    SUBVALUES: tuple[str, ...] | None = None
+
     def __init__(self, period: int = 14) -> None:
         if period < 1:
             raise ValueError(f"ATR period must be >= 1, got {period}")
@@ -230,6 +253,9 @@ class ATR:
 # ---------------------------------------------------------------------------
 class MACD:
     """MACD = EMA(fast) - EMA(slow); signal = EMA(signal_period) of MACD."""
+
+    PANEL = "macd"
+    SUBVALUES: tuple[str, ...] | None = ("macd", "signal", "histogram")
 
     def __init__(self, fast: int = 12, slow: int = 26, signal: int = 9) -> None:
         if fast >= slow:
@@ -291,6 +317,9 @@ class BollingerBands:
 
     Uses population std (ddof=0), matching TradingView default.
     """
+
+    PANEL = "price"
+    SUBVALUES: tuple[str, ...] | None = ("mid", "upper", "lower")
 
     def __init__(self, period: int = 20, mult: float = 2.0) -> None:
         if period < 2:
