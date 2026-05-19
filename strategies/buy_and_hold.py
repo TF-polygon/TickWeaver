@@ -7,15 +7,37 @@ buy_and_hold.py — 가장 단순한 e2e 검증용 전략.
 레퍼런스: strategies/_reference.md
 """
 
+from typing import TYPE_CHECKING
 
-def on_bar(bar):
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    # FileStrategy injects `api`, `context`, and the enums below into the
+    # module namespace right before on_init/on_bar/... are called. These
+    # declarations make static analyzers (Pylance, Pyright, mypy)
+    # understand the names.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
+
+
+def on_bar(bar: "OHLCBar") -> None:
     if api.is_flat():
         qty = api.size_from_cash_pct(0.99, bar.close)
         if qty > 0:
             api.market_buy(qty)
 
 
-def on_deinit():
+def on_deinit() -> None:
     api.log("buy_and_hold finished",
             final_equity=api.equity,
             position_qty=api.position().qty)

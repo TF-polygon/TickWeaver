@@ -3,7 +3,26 @@
 Reference: strategies/_reference.md
 """
 
+from typing import TYPE_CHECKING
+
 from tickweaver.strategy.indicators import EMA
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    # FileStrategy injects these names into the module namespace.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
 
 
 # ── trading parameters (module constants) ───────────────────
@@ -18,7 +37,7 @@ ema_slow = None
 prev_diff = None
 
 
-def on_init():
+def on_init() -> None:
     global ema_fast, ema_slow, prev_diff
     ema_fast = EMA(period=EMA_FAST)
     ema_slow = EMA(period=EMA_SLOW)
@@ -29,7 +48,7 @@ def on_init():
     api.bind_indicator("EMA slow", ema_slow)
 
 
-def on_bar(bar):
+def on_bar(bar: "OHLCBar") -> None:
     global prev_diff
 
     ema_fast.update(bar.close)
@@ -55,7 +74,7 @@ def on_bar(bar):
     prev_diff = diff
 
 
-def on_deinit():
+def on_deinit() -> None:
     api.log(
         "ema_cross finished",
         final_equity=api.equity,

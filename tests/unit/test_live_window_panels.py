@@ -264,3 +264,88 @@ def test_crosshair_lookup_maps_panel_indicator_values():
 def _empty_recorder():
     from tickweaver.viz.recorder import EventRecorder
     return EventRecorder()
+
+
+# ─────────────────────────────────────────────────────────
+# Phase F3 (round 2) — marker legend in description HTML
+# ─────────────────────────────────────────────────────────
+def test_description_html_renders_marker_legend_when_specs_given():
+    html = _build_description_html(
+        symbol="X",
+        timeframe="1h",
+        period_start=pd.Timestamp("2025-01-01", tz="UTC"),
+        period_end=pd.Timestamp("2025-01-31", tz="UTC"),
+        initial_cash=10_000.0,
+        final_equity=10_000.0,
+        n_fills=4,
+        n_trades=2,
+        indicator_specs=[],
+        marker_specs=[
+            ("Open Long", "^", "#2196F3", 2),
+            ("Close Long", "v", "#FF9800", 2),
+        ],
+    )
+    assert "Open Long" in html
+    assert "Close Long" in html
+    assert "#2196F3" in html
+    assert "#FF9800" in html
+    # ▲ for ^, ▼ for v
+    assert "▲" in html or "&#9650;" in html
+    assert "▼" in html or "&#9660;" in html
+
+
+def test_description_html_marker_legend_shows_count():
+    html = _build_description_html(
+        symbol="X",
+        timeframe="1h",
+        period_start=pd.Timestamp("2025-01-01", tz="UTC"),
+        period_end=pd.Timestamp("2025-01-31", tz="UTC"),
+        initial_cash=10_000.0,
+        final_equity=10_000.0,
+        n_fills=8,
+        n_trades=4,
+        indicator_specs=[],
+        marker_specs=[
+            ("Open Long", "^", "#2196F3", 3),
+            ("Close Long", "v", "#FF9800", 3),
+            ("Open Short", "v", "#EF5350", 1),
+            ("Close Short", "^", "#26A69A", 1),
+        ],
+    )
+    # Each count should appear next to its label.
+    assert "3" in html
+    assert "1" in html
+
+
+def test_description_html_omits_marker_section_when_specs_empty():
+    """marker_specs=[] means no fills at all — no Markers section."""
+    html = _build_description_html(
+        symbol="X",
+        timeframe="1h",
+        period_start=pd.Timestamp("2025-01-01", tz="UTC"),
+        period_end=pd.Timestamp("2025-01-31", tz="UTC"),
+        initial_cash=10_000.0,
+        final_equity=10_000.0,
+        n_fills=0,
+        n_trades=0,
+        indicator_specs=[],
+        marker_specs=[],
+    )
+    # "Markers" header should not appear when there are no marker specs.
+    assert "Markers" not in html
+
+
+def test_description_html_marker_specs_default_is_empty():
+    """Calling without marker_specs= must still work (back-compat)."""
+    html = _build_description_html(
+        symbol="X",
+        timeframe="1h",
+        period_start=pd.Timestamp("2025-01-01", tz="UTC"),
+        period_end=pd.Timestamp("2025-01-31", tz="UTC"),
+        initial_cash=10_000.0,
+        final_equity=10_000.0,
+        n_fills=0,
+        n_trades=0,
+        indicator_specs=[],
+    )
+    assert "Markers" not in html

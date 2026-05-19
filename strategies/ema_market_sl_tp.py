@@ -7,7 +7,26 @@ fire inside a bar wick at the actual price the wick reached.
 Trading parameters (edit here to tune):
 """
 
+from typing import TYPE_CHECKING
+
 from tickweaver.strategy.indicators import EMA
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    # FileStrategy injects these names into the module namespace.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
 
 
 # ── trading parameters (module constants) ───────────────────
@@ -29,7 +48,7 @@ sl_price = None
 tp_price = None
 
 
-def on_init():
+def on_init() -> None:
     global fast_ema, slow_ema, prev_fast, prev_slow
     global entry_price, sl_price, tp_price
     fast_ema = EMA(period=FAST_PERIOD)
@@ -44,7 +63,7 @@ def on_init():
     api.bind_indicator("EMA slow", slow_ema)
 
 
-def on_bar(bar):
+def on_bar(bar: "OHLCBar") -> None:
     """Bar-close EMA cross detection. Order fills on next bar tick 1."""
     global prev_fast, prev_slow
 
@@ -70,7 +89,7 @@ def on_bar(bar):
     prev_slow = slow_v
 
 
-def on_tick(tick):
+def on_tick(tick: "Tick") -> None:
     """Per-tick SL/TP enforcement. Runs AFTER broker fills on this tick."""
     global entry_price, sl_price, tp_price
 

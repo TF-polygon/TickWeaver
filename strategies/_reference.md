@@ -76,6 +76,53 @@ def on_init():
 
 엔진은 `on_init` 호출 직전에 모듈 globals 에 `api`, `params`, `context` 세 개를 주입합니다. 그 이후로 어떤 훅에서든 그냥 `api.market_buy(...)` 처럼 쓸 수 있습니다.
 
+### 0.4 IDE 경고 끄기 — `TYPE_CHECKING` 표준 블록
+
+`api`, `context`, `Side` / `OrderType` / `PositionSide` 같은 enum 들은 모두 FileStrategy 가 모듈 namespace 에 **런타임 주입**합니다. 즉 정적 분석기 (Pylance / Pyright / mypy) 가 그 사실을 모르고 "undefined variable" 경고를 띄웁니다.
+
+이걸 끄려면 모든 전략 파일 상단에 아래 **TYPE_CHECKING 표준 블록**을 넣어주세요. 런타임에는 `TYPE_CHECKING == False` 라서 안쪽 import 와 변수 선언은 절대 실행되지 않습니다 — 순수 IDE 힌트입니다.
+
+```python
+"""my_alpha.py - 한 줄 요약."""
+
+from typing import TYPE_CHECKING
+
+# 런타임에 실제로 사용할 import 는 여기에. (예: indicators)
+from tickweaver.strategy.indicators import RSI
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    # FileStrategy injects these names into the module namespace right
+    # before on_init/on_bar/... are called.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
+```
+
+훅 시그니처에도 forward-ref 어노테이션을 붙이면 `bar.close`, `tick.price`, `fill.qty` 같은 멤버 자동완성이 켜집니다:
+
+```python
+def on_init() -> None: ...
+def on_bar(bar: "OHLCBar") -> None: ...
+def on_tick(tick: "Tick") -> None: ...
+def on_fill(fill: "Fill") -> None: ...
+def on_deinit() -> None: ...
+```
+
+**왜 forward-ref (`"OHLCBar"`) 인가**: 어노테이션 값이 문자열이면 Python 이 import 시점에 평가하지 않습니다. `OHLCBar` 등은 `TYPE_CHECKING` 블록 안에서만 import 되었으므로 (런타임에는 정의되지 않음), 어노테이션을 그냥 `OHLCBar` 로 쓰면 NameError 가 납니다. 문자열 forward-ref 가 안전한 표준입니다.
+
+복사해 쓸 수 있는 완전한 템플릿은 `strategies/_starter.py` 에 들어있습니다.
+
 ---
 
 ## 1. 라이프사이클 훅 (`on_init` / `on_bar` / `on_tick` / `on_fill` / `on_deinit`)

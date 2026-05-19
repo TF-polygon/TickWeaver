@@ -129,6 +129,10 @@ class BacktestEngine:
                 except Exception:
                     pass
             self.chart_hook.on_fill(fill)
+            # Phase F4.4 fix: notify the strategy so that on_fill-driven
+            # state machines (e.g. future_demo's grid-crossing phases) can
+            # advance immediately when a broker fill happens.
+            self.strategy.call_on_fill(fill)
 
         self.broker.set_fill_callback(_on_fill)
 

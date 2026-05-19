@@ -26,7 +26,7 @@ from typing import Callable
 
 import pandas as pd
 
-from tickweaver.core.exceptions import OrderError
+from tickweaver.core.exceptions import OrderError, SpotShortNotAllowedError
 from tickweaver.core.types import (
     Fill,
     Order,
@@ -56,6 +56,8 @@ class BacktestBroker:
         initial_cash: float = 10000.0,
         fee_model: FeeModel | None = None,
         slippage_model: SlippageModel | None = None,
+        mode: str = "futures",
+        leverage: float = 1.0,
     ) -> None:
         self.symbol = symbol
         self._cash: float = float(initial_cash)
@@ -63,6 +65,24 @@ class BacktestBroker:
         self._position = Position(symbol=symbol)
         self._fee_model: FeeModel = fee_model or BpsFeeModel(5.0)
         self._slippage: SlippageModel = slippage_model or FixedBpsSlippage(2.0)
+        # Phase F1: mode-aware short-open guard.
+        # "spot"   -> reject SELL orders that would open a short position.
+        # "futures" -> no extra constraint (short trading allowed).
+        # Default "futures" so existing call sites (incl. tests that omit
+        # mode=) keep behaving exactly as before this phase.
+        if mode not in ("spot", "futures"):
+            raise OrderError(
+                f"BacktestBroker mode must be 'spot' or 'futures', got {mode!r}"
+            )
+        self._mode: str = mode
+        # Phase F4.5: leverage is a strategy-side qty multiplier exposed via
+        # api.leverage. Broker accounting is unchanged — cash is still
+        # debited at notional. True margin trading is out of scope for now.
+        if leverage <= 0:
+            raise OrderError(
+                f"BacktestBroker leverage must be positive, got {leverage!r}"
+            )
+        self._leverage: float = float(leverage)
 
         self._open_orders: list[Order] = []
         self._triggered: set[str] = set()
@@ -83,6 +103,12 @@ class BacktestBroker:
     def initial_cash(self) -> float:
         return self._initial_cash
 
+    @property
+    def leverage(self) -> float:
+        """Phase F4.5: qty multiplier used by strategies; broker accounting
+        itself is leverage-agnostic (cash debited at notional)."""
+        return self._leverage
+
     def position(self) -> Position:
         return self._position
 
@@ -92,6 +118,21 @@ class BacktestBroker:
         if order.symbol != self.symbol:
             raise OrderError(
                 f"symbol mismatch: order={order.symbol} vs broker={self.symbol}"
+            )
+
+        # Phase F1: spot-mode short-open guard. SELL while FLAT in spot mode
+        # would open a short position, which spot markets do not support.
+        # LONG -> SELL (close) is still allowed.
+        if (
+            self._mode == "spot"
+            and order.side == Side.SELL
+            and self._position.side == PositionSide.FLAT
+        ):
+            raise SpotShortNotAllowedError(
+                f"Cannot {order.type.name} SELL in spot mode while position is "
+                f"FLAT - this would open a short position. Switch the config "
+                f"run.mode to 'futures' to allow short selling, or open a LONG "
+                f"position first."
             )
 
         t = order.type

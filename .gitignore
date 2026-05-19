@@ -38,3 +38,7 @@ Thumbs.db
 plans/
 plan.md
 plan_viz.md
+
+!strategies/short_demo.py
+!strategies/future_demo.py
+!strategies/vulture.py

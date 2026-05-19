@@ -43,6 +43,9 @@ class EventRecorder(ChartHook):
         self.ticks: deque["Tick"] = deque(maxlen=max_ticks)
         # Phase 1: indicator tracks keyed by indicator name.
         self.indicators: dict[str, IndicatorTrack] = {}
+        # Phase V7: initial cash injected by the engine (or runner) before run.
+        # show_replay uses it to display the correct PnL in the description pane.
+        self.initial_cash: float = 0.0
         self._final_equity: float | None = None
         self._init_called: bool = False
         self._deinit_called: bool = False

@@ -150,6 +150,18 @@ class StrategyAPI:
     def equity(self) -> float:
         return self._broker.equity
 
+    @property
+    def leverage(self) -> float:
+        """Phase F4.5: leverage forwarded from broker (= cfg.run.leverage).
+
+        Strategies typically use this as a qty multiplier:
+            qty = (notional_usdt * api.leverage) / current_price
+        Broker accounting itself is leverage-agnostic — cash is debited at
+        the full notional. Treat leverage as a strategy-side knob until
+        margin trading semantics are implemented.
+        """
+        return getattr(self._broker, "leverage", 1.0)
+
     # ---- helpers ----
     def round_qty(self, qty: float) -> float:
         if self._qty_step <= 0:

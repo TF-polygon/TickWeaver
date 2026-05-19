@@ -85,6 +85,36 @@ def on_bar(bar):
 
 추가 편의 enum (자동 주입): `Side`, `OrderType`, `PositionSide`.
 
+### 4.1 IDE 경고 끄기 — `TYPE_CHECKING` 표준 블록
+
+위 globals 는 모두 **런타임 주입**이라 IDE / 정적 분석기 (Pylance, Pyright, mypy) 는 모릅니다. `api`, `Side`, `PositionSide` 같은 이름이 "undefined" 로 빨갛게 표시되기 쉽습니다. 끄려면 모든 전략 파일 상단에 아래 표준 블록을 넣어주세요. 런타임에는 평가되지 않으니 동작에 영향이 전혀 없습니다.
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
+
+
+def on_bar(bar: "OHLCBar") -> None:   # forward-ref 어노테이션
+    api.market_buy(0.05)
+```
+
+훅의 `bar` / `tick` / `fill` 인자에도 문자열 forward-ref 로 어노테이션을 붙이면 `bar.close`, `tick.price` 등 멤버 자동완성이 켜집니다. `strategies/_starter.py` 가 표준 템플릿이며 `strategies/*.py` 모든 전략이 이 패턴을 따릅니다. 자세한 설명은 `strategies/_reference.md` §0.4.
+
 ---
 
 ## 5. 패턴 카탈로그

@@ -30,3 +30,13 @@ class StrategyError(TickweaverError):
 
 class OrderError(TickweaverError):
     """주문 검증 / 발주 실패 (잔고 부족, 룰 위반 등)."""
+
+
+class SpotShortNotAllowedError(OrderError):
+    """Spot 모드에서 short 포지션을 열려는 SELL 주문을 거부.
+
+    config의 ``run.mode == "spot"`` 일 때 FLAT 상태에서 SELL 주문을 제출하면
+    이 예외가 발생합니다. ``mode="futures"`` 로 전환하거나, 전략이 LONG 포지션을
+    먼저 보유한 다음에 SELL (= close) 하도록 수정하세요. OrderError 의 하위 타입
+    이므로 기존 ``except OrderError`` 블록도 그대로 잡습니다.
+    """

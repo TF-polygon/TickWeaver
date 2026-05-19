@@ -147,6 +147,8 @@ def run_backtest(
         initial_cash=cfg.run.initial_capital,
         fee_model=fee_model,
         slippage_model=slippage,
+        mode=cfg.run.mode,
+        leverage=cfg.run.leverage,
     )
     api = StrategyAPI(
         broker=broker,
@@ -162,6 +164,9 @@ def run_backtest(
             chart_hook.symbol = symbol
         if hasattr(chart_hook, "timeframe") and not getattr(chart_hook, "timeframe"):
             chart_hook.timeframe = timeframe
+        # Phase V7: initial_cash for the description pane's PnL row.
+        if hasattr(chart_hook, "initial_cash"):
+            chart_hook.initial_cash = float(cfg.run.initial_capital)
 
     context = StrategyContext(
         symbol=symbol,

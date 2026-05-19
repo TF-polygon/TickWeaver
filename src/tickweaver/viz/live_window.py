@@ -46,12 +46,28 @@ _BORDER = "#3A4A66"
 _BULL = "#26A69A"
 _BEAR = "#EF5350"
 
-# Spot order markers (Buy / Sell)
+# Spot order markers (Buy / Sell) — kept for back-compat with single-axis path.
 _BUY = "#2196F3"
 _SELL = "#FF9800"
 
-# Pair connecting line (Buy -> Sell)
+# Phase F3: 4-way intent-aware fill markers (Open/Close x Long/Short).
+# Color encodes intent (open/close + direction), shape encodes order side
+# (^ for BUY, v for SELL). Combined they read as:
+#   ^ blue   = Open Long      (BUY from FLAT)
+#   v orange = Close Long     (SELL while LONG)
+#   v red    = Open Short     (SELL from FLAT, futures only)
+#   ^ teal   = Close Short    (BUY while SHORT, futures only)
+_OPEN_LONG_COLOR   = "#2196F3"   # blue
+_CLOSE_LONG_COLOR  = "#FF9800"   # orange
+_OPEN_SHORT_COLOR  = "#EF5350"   # red
+_CLOSE_SHORT_COLOR = "#26A69A"   # teal
+
+# Pair connecting line (entry → close).
+# Phase V8b: split by entry side. Long pairs = pure blue (0,0,255), Short
+# pairs = pure red (255,0,0). _PAIR remains as a legacy fallback.
 _PAIR = "#2196F3"
+_PAIR_LONG  = "#0000FF"   # rgb(0, 0, 255)
+_PAIR_SHORT = "#FF0000"   # rgb(255, 0, 0)
 
 # Marker styling
 _MARKER_SIZE = 7
@@ -148,6 +164,7 @@ def _build_description_html(
     n_fills: int,
     n_trades: int,
     indicator_specs: list[tuple[str, str, str]],
+    marker_specs: list[tuple[str, str, str, int]] | None = None,
 ) -> str:
     """Render the bottom description pane.
 
@@ -193,10 +210,30 @@ def _build_description_html(
             + "</ul></div>"
         )
 
+    # Phase F3 round 2: 4-way marker legend. Each spec is
+    # (label, shape, color, count). Shape "^" → ▲ (BUY), "v" → ▼ (SELL).
+    marker_li = ""
+    if marker_specs:
+        items = []
+        for label, shape, color, count in marker_specs:
+            glyph = "▲" if shape == "^" else "▼"
+            items.append(
+                f"<li><span style='color:{color}; font-size:13pt;'>{glyph}</span>"
+                f"&nbsp;<b>{label}</b>&nbsp;"
+                f"<span style='color:#8a98b0;'>({count})</span></li>"
+            )
+        marker_li = (
+            "<div style='margin-top:6px;'><b>Markers</b>"
+            "<ul style='margin:2px 0 0 16px; padding:0;'>"
+            + "".join(items)
+            + "</ul></div>"
+        )
+
     return (
         f"<div style='color:{_FG}; font-family:Consolas,monospace; font-size:11px;'>"
         f"<b>Backtest summary</b>"
         f"<ul style='margin:2px 0 0 16px; padding:0;'>{summary_li}</ul>"
+        f"{marker_li}"
         f"{indicator_li}"
         f"</div>"
     )
@@ -259,6 +296,89 @@ def _draw_pair_line(fplt, ax, x0, y0, x1, y1, color: str) -> None:
         fplt.add_line((x0, y0), (x1, y1), color=color, width=1, ax=ax, interactive=False)
 
 
+def _classify_fills_by_intent(fills) -> dict[str, list[tuple]]:
+    """Classify each fill as one of {open_long, close_long, open_short,
+    close_short} by simulating position state through the fill sequence.
+
+    Returns a dict mapping each intent to a list of ``(timestamp, price)``
+    tuples in fill order.
+
+    A reverse fill (SELL with qty > position.qty while LONG, or vice versa)
+    emits BOTH a close and an open at the same timestamp / price — that is
+    the correct visual story for a futures position flip.
+    """
+    open_long: list[tuple] = []
+    close_long: list[tuple] = []
+    open_short: list[tuple] = []
+    close_short: list[tuple] = []
+
+    cur_side: str | None = None   # 'long' / 'short' / None
+    cur_qty: float = 0.0
+
+    for f in fills:
+        side_value = f.side.value if hasattr(f.side, "value") else str(f.side)
+        ts = f.timestamp
+        price = float(f.price)
+        qty = float(f.qty)
+
+        if cur_side is None:
+            # Open from FLAT.
+            if side_value == "buy":
+                cur_side = "long"
+                cur_qty = qty
+                open_long.append((ts, price))
+            else:
+                cur_side = "short"
+                cur_qty = qty
+                open_short.append((ts, price))
+            continue
+
+        if cur_side == "long":
+            if side_value == "buy":
+                # Pyramiding: same side add.
+                cur_qty += qty
+                open_long.append((ts, price))
+            else:
+                # SELL while LONG: close (possibly + reverse to short).
+                close_long.append((ts, price))
+                close_qty = min(cur_qty, qty)
+                cur_qty -= close_qty
+                if cur_qty <= 1e-12:
+                    cur_side = None
+                    cur_qty = 0.0
+                    leftover = qty - close_qty
+                    if leftover > 1e-12:
+                        # Position flip — open short with the leftover.
+                        cur_side = "short"
+                        cur_qty = leftover
+                        open_short.append((ts, price))
+        else:  # cur_side == "short"
+            if side_value == "sell":
+                # Pyramiding: same side add.
+                cur_qty += qty
+                open_short.append((ts, price))
+            else:
+                # BUY while SHORT: close (possibly + reverse to long).
+                close_short.append((ts, price))
+                close_qty = min(cur_qty, qty)
+                cur_qty -= close_qty
+                if cur_qty <= 1e-12:
+                    cur_side = None
+                    cur_qty = 0.0
+                    leftover = qty - close_qty
+                    if leftover > 1e-12:
+                        cur_side = "long"
+                        cur_qty = leftover
+                        open_long.append((ts, price))
+
+    return {
+        "open_long": open_long,
+        "close_long": close_long,
+        "open_short": open_short,
+        "close_short": close_short,
+    }
+
+
 def _split_buy_sell(recorder: "EventRecorder"):
     buy_x: list = []
     buy_y: list = []
@@ -283,6 +403,61 @@ def _trades(recorder: "EventRecorder") -> list:
         return extract_trades(recorder.fills)
     except Exception:
         return []
+
+
+def _make_pair_lines(fills) -> list[tuple]:
+    """Phase V8: per-position pair line endpoints from a raw Fill sequence.
+
+    Unlike `extract_trades` (which averages martingale adds into a single
+    Trade with a weighted entry price), this helper emits one tuple per
+    entry fill — so a martingale cycle with N adds renders as N pair
+    lines all sharing the same exit endpoint.
+
+    Matching is FIFO over Side.BUY ↔ Side.SELL queues. Same-side fills
+    grow the open queue; opposite-side fills pop FIFO and emit a pair line
+    for each matched (open_fill, close_fill, qty) chunk. Surplus leftover
+    on the closing fill becomes a new open (reverse) entry.
+
+    Returns: list of (entry_ts, entry_price, exit_ts, exit_price[, side])
+    tuples. `side` is the *entry* side string ("buy" for a long, "sell"
+    for a short) — used by show_replay to color lines per direction.
+    Tests that index by position 0..3 still work; side is at index 4.
+    """
+    open_longs: list[list] = []   # [ts, price, qty_remaining]
+    open_shorts: list[list] = []  # [ts, price, qty_remaining]
+    pairs: list[tuple] = []
+
+    for f in fills:
+        side = f.side.value if hasattr(f.side, "value") else str(f.side)
+        qty = float(f.qty)
+        ts = f.timestamp
+        price = float(f.price)
+
+        if side == "buy":
+            # Close shorts FIFO first; leftover opens a new long.
+            while qty > 1e-12 and open_shorts:
+                s = open_shorts[0]
+                matched = min(s[2], qty)
+                pairs.append((s[0], s[1], ts, price, "sell"))
+                s[2] -= matched
+                qty -= matched
+                if s[2] <= 1e-12:
+                    open_shorts.pop(0)
+            if qty > 1e-12:
+                open_longs.append([ts, price, qty])
+        else:  # sell — mirror
+            while qty > 1e-12 and open_longs:
+                lng = open_longs[0]
+                matched = min(lng[2], qty)
+                pairs.append((lng[0], lng[1], ts, price, "buy"))
+                lng[2] -= matched
+                qty -= matched
+                if lng[2] <= 1e-12:
+                    open_longs.pop(0)
+            if qty > 1e-12:
+                open_shorts.append([ts, price, qty])
+
+    return pairs
 
 
 def _style_marker(item, fill_color: str) -> None:
@@ -789,31 +964,332 @@ def show_replay(
         price_ax = axes[0]
         sub_axes = {pid: axes[i] for i, pid in enumerate(order) if i > 0}
 
+    # Phase V14: 마우스 LMB drag = pan 강화 + 진단.
+    #
+    # V12 의 class-level mouseDragEvent override 가 안 먹는 경우 = finplot
+    # 이 raw Qt event (mousePressEvent/mouseMoveEvent/mouseReleaseEvent/
+    # wheelEvent) 를 ViewBox 또는 다른 graphic item 에서 직접 받음. 또는
+    # 우리가 mro 에서 못 찾은 다른 ViewBox subclass 가 vb 의 실제 타입.
+    #
+    # 두 가지 동시 시도:
+    #   (a) 진단 dump — vb 의 클래스 mro + 각 mouse method 의 실제 출처를
+    #       stderr 로 출력. 다음 보고로 finplot 의 정확한 hook 지점 노출.
+    #   (b) 강화 monkeypatch — wheelEvent + mousePress/Move/Release 까지
+    #       포함해 vb 의 타입(인스턴스 타입) 자체에 class-level override.
+    try:
+        import sys
+        import pyqtgraph as pg
+        from pyqtgraph.Qt import QtCore  # noqa: F401  (loaded for side effects)
+
+        _pan_mode = getattr(pg.ViewBox, "PanMode", 3)
+        _stock_drag = pg.ViewBox.mouseDragEvent
+        _stock_click = pg.ViewBox.mouseClickEvent
+        _stock_wheel = pg.ViewBox.wheelEvent
+
+        _vbs = [price_ax]
+        _vbs.extend(sub_axes.values())
+
+        def _dump_vb(label: str, vb0):
+            try:
+                _cls = type(vb0)
+                _mod = _cls.__module__ or "?"
+                print(f"[VIZ {label} vb class] {_mod}.{_cls.__name__}",
+                      file=sys.stderr, flush=True)
+                if label == "before":
+                    _mro = [
+                        (c.__module__ or "?") + "." + c.__name__
+                        for c in _cls.__mro__
+                    ]
+                    print(f"[VIZ {label} vb mro] {_mro}",
+                          file=sys.stderr, flush=True)
+                _method_names = (
+                    "mouseDragEvent", "mouseClickEvent", "wheelEvent",
+                    "mousePressEvent", "mouseMoveEvent", "mouseReleaseEvent",
+                    "hoverEvent",
+                )
+                for _n in _method_names:
+                    _m = getattr(vb0, _n, None)
+                    if _m is None:
+                        print(f"[VIZ {label} vb.{_n}] <missing>",
+                              file=sys.stderr, flush=True)
+                        continue
+                    _func = getattr(_m, "__func__", _m)
+                    _src_mod = getattr(_func, "__module__", None) or "?"
+                    _src_qn = getattr(_func, "__qualname__", None) or "?"
+                    print(f"[VIZ {label} vb.{_n}] {_src_mod}.{_src_qn}",
+                          file=sys.stderr, flush=True)
+                try:
+                    _mm = vb0.state.get("mouseMode")
+                    print(f"[VIZ {label} vb.state.mouseMode] {_mm}",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+                # V18: Y autoRange 가 켜져 있으면 pan 시마다 Y 가 새 X 범위에
+                # 자동 fit 되어 "zoom" 현상 발생. autoRange state 와
+                # autoVisibleOnly 둘 다 dump.
+                try:
+                    _ar = vb0.state.get("autoRange")
+                    _avo = vb0.state.get("autoVisibleOnly")
+                    print(f"[VIZ {label} vb.state.autoRange] {_ar}",
+                          file=sys.stderr, flush=True)
+                    print(f"[VIZ {label} vb.state.autoVisibleOnly] {_avo}",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+                # V17: scene 의 class + raw mouse method 출처. 만약 finplot
+                # 이 custom GraphicsScene subclass 를 쓰면 거기서 raw mouse
+                # event 를 가로채서 매 move 마다 작은 zoom 누적 가능.
+                try:
+                    _scene = vb0.scene()
+                    _scls = type(_scene)
+                    _smod = _scls.__module__ or "?"
+                    print(f"[VIZ {label} scene class] {_smod}.{_scls.__name__}",
+                          file=sys.stderr, flush=True)
+                    for _n in ("mousePressEvent", "mouseMoveEvent",
+                               "mouseReleaseEvent", "wheelEvent"):
+                        _m = getattr(_scene, _n, None)
+                        if _m is None:
+                            print(f"[VIZ {label} scene.{_n}] <missing>",
+                                  file=sys.stderr, flush=True)
+                            continue
+                        _func = getattr(_m, "__func__", _m)
+                        _src_mod = getattr(_func, "__module__", None) or "?"
+                        _src_qn = getattr(_func, "__qualname__", None) or "?"
+                        print(f"[VIZ {label} scene.{_n}] {_src_mod}.{_src_qn}",
+                              file=sys.stderr, flush=True)
+                    for _sig_name in ("sigMouseDragged", "sigMouseClicked",
+                                      "sigMouseHover", "sigMouseMoved"):
+                        _sig = getattr(_scene, _sig_name, None)
+                        if _sig is None:
+                            continue
+                        try:
+                            _n_slots = _sig.receivers()
+                        except Exception:
+                            _n_slots = "?"
+                        print(f"[VIZ {label} scene.{_sig_name}] receivers="
+                              f"{_n_slots}", file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+            except Exception as _e:
+                print(f"[VIZ {label} probe err] {type(_e).__name__}: {_e}",
+                      file=sys.stderr, flush=True)
+
+        try:
+            # pyqtgraph 버전 + PanMode/RectMode 실제 값. mouseMode 가
+            # PanMode 와 RectMode 중 어느 쪽인지 사용자 환경에서 확인.
+            try:
+                print(f"[VIZ pg.__version__]={pg.__version__!r}",
+                      file=sys.stderr, flush=True)
+            except Exception:
+                pass
+            try:
+                _pm = getattr(pg.ViewBox, "PanMode", "<missing>")
+                _rm = getattr(pg.ViewBox, "RectMode", "<missing>")
+                print(f"[VIZ pg.ViewBox.PanMode]={_pm!r} RectMode={_rm!r}",
+                      file=sys.stderr, flush=True)
+            except Exception:
+                pass
+
+            _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
+            _dump_vb("before", _vb0)
+            # finplot 글로벌 변수 후보 출력
+            try:
+                import finplot as _fplt_mod
+                _maybe = ("right_click_zoom", "left_click_zoom",
+                          "right_click_mouse_zoom", "left_drag_pan",
+                          "right_drag_pan", "lock_x_axis")
+                for _k in _maybe:
+                    if hasattr(_fplt_mod, _k):
+                        print(f"[VIZ fplt.{_k}] {getattr(_fplt_mod, _k)!r}",
+                              file=sys.stderr, flush=True)
+            except Exception:
+                pass
+        except Exception as _e:
+            print(f"[VIZ before probe err] {type(_e).__name__}: {_e}",
+                  file=sys.stderr, flush=True)
+
+        # (b) 강화 monkeypatch — vb 인스턴스의 *실제 타입* 자체에 class-level
+        # override + raw Qt event 까지 finplot override 제거.
+        #
+        # V16 핵심: mousePressEvent / mouseMoveEvent / mouseReleaseEvent 가
+        # finplot 의 FinViewBox 에 직접 override 되어 있어 (진단으로 확인),
+        # raw Qt event 단계에서 finplot 의 zoom 로직이 실행됨. 이걸 잡으려면
+        # 그 method 들도 같이 처리해야 함. 표준 pg.ViewBox 에는 그 method 가
+        # 정의되어 있지 않으므로 `delattr` 로 finplot override 만 제거해서
+        # mro 상위 (QGraphicsWidget) 의 기본 동작으로 fall through.
+        _patched_types: set = set()
+        _replace_targets = (
+            ("mouseDragEvent", _stock_drag, True),    # pg 에 있음 → 교체
+            ("mouseClickEvent", _stock_click, True),
+            ("wheelEvent", _stock_wheel, True),
+            ("mousePressEvent", None, False),         # pg 에 없음 → delattr
+            ("mouseMoveEvent", None, False),
+            ("mouseReleaseEvent", None, False),
+        )
+        for _ax in _vbs:
+            vb = getattr(_ax, "vb", None) or getattr(
+                _ax, "getViewBox", lambda: None
+            )()
+            if vb is None:
+                continue
+            for _cls in type(vb).__mro__:
+                if _cls is pg.ViewBox:
+                    break
+                if id(_cls) in _patched_types:
+                    continue
+                _patched_types.add(id(_cls))
+                for _attr_name, _stock, _do_replace in _replace_targets:
+                    if _attr_name not in _cls.__dict__:
+                        continue
+                    if _do_replace and _stock is not None:
+                        try:
+                            setattr(_cls, _attr_name, _stock)
+                        except Exception:
+                            pass
+                    else:
+                        # delattr — finplot override 만 제거하고 super 의
+                        # default 가 호출되게 함
+                        try:
+                            delattr(_cls, _attr_name)
+                        except Exception:
+                            pass
+            # state + setMouseMode 정리
+            try:
+                vb.setMouseMode(_pan_mode)
+            except Exception:
+                pass
+            try:
+                vb.state["mouseMode"] = _pan_mode
+            except Exception:
+                pass
+            # V18: Y autoRange 비활성. pan 시마다 Y 가 새 X 범위에 자동 fit
+            # 되는 현상이 사용자에게 "zoom" 으로 보였음. 첫 view 의 Y range
+            # 는 chart 그릴 때 fit 된 채로 시작하고, 그 이후 pan 시에는 Y
+            # 그대로 유지. 사용자가 직접 Y zoom 하려면 vb.enableAutoRange(y)
+            # 호출 (toolbar 의 auto-range 버튼 등) 시점에 다시 켜짐.
+            try:
+                vb.enableAutoRange(axis="y", enable=False)
+            except Exception:
+                pass
+            # V17: instance level 에 진단 wrap + 강제 pan-only mouseDragEvent.
+            # 이 함수는 LMB/MMB/RMB 어떤 button drag 든 무조건 pan 만 수행.
+            # 호출 시점에 stderr 로 print 찍어서 진짜 호출되는지 확인.
+            #
+            # 만약 LMB drag 시 viz 에서 zoom 발생하는데 [VIZ DRAG] 가 안 찍히면
+            # → mouseDragEvent 가 호출 안 되고 다른 path (scene 의 raw event
+            # 또는 별도 signal slot) 에서 zoom 처리.
+            # 찍히면 → drag dispatch 는 우리 함수로 옴. 그래도 zoom 보이면
+            # 동시에 다른 handler 가 zoom 추가 처리.
+            _drag_counter = [0]
+            def _force_pan_drag(self, ev, axis=None):
+                import sys
+                _drag_counter[0] += 1
+                # 처음 5 회 + 매 50 회마다 한 줄 (stderr 폭주 방지)
+                _i = _drag_counter[0]
+                if _i <= 5 or _i % 50 == 0:
+                    print(
+                        f"[VIZ DRAG #{_i}] button={ev.button()} "
+                        f"mode={self.state.get('mouseMode')} "
+                        f"finish={ev.isFinish()} axis={axis}",
+                        file=sys.stderr, flush=True,
+                    )
+                ev.accept()
+                if ev.isFinish():
+                    return
+                pos = ev.scenePos()
+                lastPos = ev.lastScenePos()
+                dif_x = pos.x() - lastPos.x()
+                dif_y = pos.y() - lastPos.y()
+                tr = self.childGroup.transform()
+                inv_tr, _ok = tr.inverted()
+                p0 = inv_tr.map(pg.QtCore.QPointF(0.0, 0.0))
+                p1 = inv_tr.map(pg.QtCore.QPointF(-dif_x, -dif_y))
+                self._resetTarget()
+                self.translateBy(x=p1.x() - p0.x(), y=p1.y() - p0.y())
+                self.sigRangeChangedManually.emit(self.state["mouseEnabled"])
+            try:
+                vb.mouseDragEvent = _force_pan_drag.__get__(vb, type(vb))
+            except Exception as _e:
+                print(f"[VIZ drag bind err] {_e}",
+                      file=sys.stderr, flush=True)
+            try:
+                vb.wheelEvent = _stock_wheel.__get__(vb, type(vb))
+            except Exception:
+                pass
+            # 인스턴스에 raw event override 가 있다면 그것도 제거
+            for _raw in ("mousePressEvent", "mouseMoveEvent",
+                         "mouseReleaseEvent"):
+                try:
+                    if _raw in vb.__dict__:
+                        del vb.__dict__[_raw]
+                except Exception:
+                    pass
+
+        if _patched_types:
+            print(f"[VIZ patched class count] {len(_patched_types)}",
+                  file=sys.stderr, flush=True)
+
+        # patch 후 동일 dump — patch 가 실제로 method 를 교체했는지 검증.
+        # 만약 patch 후에도 mouseDragEvent 의 출처가 finplot.* 이면
+        # class-level setattr 가 silent fail 한 것. 그 경우 다른 hook
+        # 지점을 찾아야 함.
+        try:
+            _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
+            _dump_vb("after", _vb0)
+        except Exception:
+            pass
+    except Exception as _e:
+        try:
+            import sys
+            print(f"[VIZ mouse fix err] {type(_e).__name__}: {_e}",
+                  file=sys.stderr, flush=True)
+        except Exception:
+            pass
+
     fplt.candlestick_ochl(df[["open", "close", "high", "low"]], ax=price_ax)
 
-    # Pair lines.
-    for t in _trades(recorder):
-        e_x = _snap_to_candle(pd.Timestamp(t.entry_ts), candle_index)
-        x_x = _snap_to_candle(pd.Timestamp(t.exit_ts), candle_index)
+    # Pair lines — Phase V8: one line per *position* (entry fill), not per
+    # averaged Trade. A martingale cycle with N adds therefore renders as N
+    # dotted lines whose left endpoints (entry fills) differ but whose right
+    # endpoints (exit fill) coincide. _make_pair_lines does FIFO matching on
+    # the raw Fill sequence so qty splits and reverse fills are handled.
+    # V8b: color by entry side — Long pair = pure blue, Short pair = pure red.
+    for _pair in _make_pair_lines(recorder.fills):
+        e_ts, e_p, x_ts, x_p = _pair[0], _pair[1], _pair[2], _pair[3]
+        entry_side = _pair[4] if len(_pair) > 4 else "buy"
+        color = _PAIR_LONG if entry_side == "buy" else _PAIR_SHORT
+        e_x = _snap_to_candle(pd.Timestamp(e_ts), candle_index)
+        x_x = _snap_to_candle(pd.Timestamp(x_ts), candle_index)
         _draw_pair_line(
             fplt, price_ax,
-            e_x, float(t.entry_price),
-            x_x, float(t.exit_price),
-            _PAIR,
+            e_x, float(e_p),
+            x_x, float(x_p),
+            color,
         )
 
-    # Buy / Sell markers — x snapped, y kept at fill_price. No legend.
-    bx, by, sx, sy = _split_buy_sell(recorder)
-    if bx:
-        bx_snap = _snap_list(bx, candle_index)
-        s = pd.Series(by, index=pd.DatetimeIndex(bx_snap))
-        item = fplt.plot(s, style=">", color=_BUY, ax=price_ax)
-        _style_marker(item, _BUY)
-    if sx:
-        sx_snap = _snap_list(sx, candle_index)
-        s = pd.Series(sy, index=pd.DatetimeIndex(sx_snap))
-        item = fplt.plot(s, style="<", color=_SELL, ax=price_ax)
-        _style_marker(item, _SELL)
+    # Phase F3: 4-way intent-aware markers (Open/Close x Long/Short).
+    # x is snapped to the candle that contains the fill timestamp; y stays
+    # at fill_price so a wick fill still lands inside the wick visually.
+    intent_groups = _classify_fills_by_intent(recorder.fills)
+    _marker_specs = (
+        ("open_long",   "^", _OPEN_LONG_COLOR),
+        ("close_long",  "v", _CLOSE_LONG_COLOR),
+        ("open_short",  "v", _OPEN_SHORT_COLOR),
+        ("close_short", "^", _CLOSE_SHORT_COLOR),
+    )
+    for key, shape, color in _marker_specs:
+        pts = intent_groups.get(key, [])
+        if not pts:
+            continue
+        xs = [t for t, _ in pts]
+        ys = [p for _, p in pts]
+        xs_snap = _snap_list(xs, candle_index)
+        s = pd.Series(ys, index=pd.DatetimeIndex(xs_snap))
+        try:
+            item = fplt.plot(s, style=shape, color=color, ax=price_ax)
+        except TypeError:
+            item = fplt.plot(s, color=color, ax=price_ax)
+        _style_marker(item, color)
 
     # Indicator lines per panel. Collect (name, panel, color) for description.
     indicator_specs: list[tuple[str, str, str]] = []
@@ -852,11 +1328,23 @@ def show_replay(
     period_start = candle_index.min() if len(candle_index) else None
     period_end = candle_index.max() if len(candle_index) else None
     final_equity = float(recorder.final_equity or 0.0)
-    initial_cash = 0.0
+    # Phase V7: runner injects initial_cash into the recorder before run.
+    initial_cash = float(getattr(recorder, "initial_cash", 0.0))
     n_trades = len(_trades(recorder))
-    # Recorder doesn't carry initial_cash; recover from equity if possible.
-    # Strategy doesn't pass it through chart hook today, so we just leave 0.0
-    # unless the BacktestResult path later wires it through.
+    # Build marker legend from the same intent_groups used to draw markers.
+    # Only include intents that actually fired (non-empty list).
+    _marker_meta = (
+        ("open_long",   "Open Long",   "^", _OPEN_LONG_COLOR),
+        ("close_long",  "Close Long",  "v", _CLOSE_LONG_COLOR),
+        ("open_short",  "Open Short",  "v", _OPEN_SHORT_COLOR),
+        ("close_short", "Close Short", "^", _CLOSE_SHORT_COLOR),
+    )
+    marker_legend: list[tuple[str, str, str, int]] = []
+    for key, label, shape, color in _marker_meta:
+        pts = intent_groups.get(key, [])
+        if pts:
+            marker_legend.append((label, shape, color, len(pts)))
+
     html = _build_description_html(
         symbol=symbol,
         timeframe=timeframe,
@@ -867,6 +1355,7 @@ def show_replay(
         n_fills=len(recorder.fills),
         n_trades=n_trades,
         indicator_specs=indicator_specs,
+        marker_specs=marker_legend,
     )
     # finplot must finish its internal bookkeeping (axs / overlay_axs /
     # autoscale) BEFORE we reparent the chart widget into our wrapper.
