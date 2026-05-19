@@ -41,4 +41,11 @@ plan_viz.md
 
 !strategies/short_demo.py
 !strategies/future_demo.py
-!strategies/vulture.py
+
+# private strategy (Vulture) — kept local only, never committed
+strategies/vulture.py
+configs/vulture.yaml
+
+# diagnostic logs from `--viz 2> ...log` redirect
+*_diag.log
+vulture_diag.log
