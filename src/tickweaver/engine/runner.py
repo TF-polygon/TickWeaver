@@ -142,6 +142,11 @@ def run_backtest(
         BpsFeeModel(cfg.execution.fee_bps) if cfg.execution.fee_bps > 0 else NoFee()
     )
     slippage = build_slippage(cfg.execution.slippage_bps)
+    # Issue 1: broker 와 strategy api 의 qty_step 을 같은 값으로 sync.
+    # broker 의 dust epsilon (= qty_step * 1.5) 이 api.round_qty 의 floor
+    # 잔여를 자동 청소. TODO: 종목별 qty_step 을 yaml 필드로 노출 (현재는
+    # BTC 기준 1e-6 default).
+    qty_step = 1e-6
     broker = BacktestBroker(
         symbol=symbol,
         initial_cash=cfg.run.initial_capital,
@@ -149,10 +154,12 @@ def run_backtest(
         slippage_model=slippage,
         mode=cfg.run.mode,
         leverage=cfg.run.leverage,
+        qty_step=qty_step,
     )
     api = StrategyAPI(
         broker=broker,
         symbol=symbol,
+        qty_step=qty_step,
         console_log=not show_progress,
         chart_hook=chart_hook,
     )
@@ -167,6 +174,9 @@ def run_backtest(
         # Phase V7: initial_cash for the description pane's PnL row.
         if hasattr(chart_hook, "initial_cash"):
             chart_hook.initial_cash = float(cfg.run.initial_capital)
+        # Issue 4 Step 4: leverage for the position table's Margin (USDT) column.
+        if hasattr(chart_hook, "leverage"):
+            chart_hook.leverage = float(cfg.run.leverage)
 
     context = StrategyContext(
         symbol=symbol,

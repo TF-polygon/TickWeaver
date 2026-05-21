@@ -46,6 +46,9 @@ class EventRecorder(ChartHook):
         # Phase V7: initial cash injected by the engine (or runner) before run.
         # show_replay uses it to display the correct PnL in the description pane.
         self.initial_cash: float = 0.0
+        # Issue 4 Step 4: leverage injected by runner. Used by show_replay to
+        # compute Margin (USDT) = price * qty / leverage for the position table.
+        self.leverage: float = 1.0
         self._final_equity: float | None = None
         self._init_called: bool = False
         self._deinit_called: bool = False
