@@ -58,6 +58,7 @@ class BacktestBroker:
         slippage_model: SlippageModel | None = None,
         mode: str = "futures",
         leverage: float = 1.0,
+        qty_step: float = 1e-6,
     ) -> None:
         self.symbol = symbol
         self._cash: float = float(initial_cash)
@@ -83,6 +84,22 @@ class BacktestBroker:
                 f"BacktestBroker leverage must be positive, got {leverage!r}"
             )
         self._leverage: float = float(leverage)
+        # Issue 1: qty_step 기반 dust epsilon.
+        #
+        # `_EPS = 1e-12` 는 가격 비교에 그대로 쓰지만, qty 비교는 너무 작아서
+        # round_qty 의 부동소수점 floor 잔여 (보통 1 step = 1e-6) 를
+        # 정리 못 함. 그 결과 마틴게일 N add cycle 의 close 후 broker net
+        # 에 1e-6 정도 dust 가 남아 `api.is_flat()` 가 False → strategy 의
+        # close_all 분기 stuck (Issue V13 의 vulture-only 우회의 근본 fix).
+        #
+        # `_qty_dust_eps = qty_step * 1.5` 로 1 step 잔여까지 안전하게
+        # FLAT 처리. trading qty 자체는 항상 step 의 배수 이상이라 영향 없음.
+        if qty_step <= 0:
+            raise OrderError(
+                f"BacktestBroker qty_step must be positive, got {qty_step!r}"
+            )
+        self._qty_step: float = float(qty_step)
+        self._qty_dust_eps: float = max(self._qty_step * 1.5, _EPS)
 
         self._open_orders: list[Order] = []
         self._triggered: set[str] = set()
@@ -269,15 +286,24 @@ class BacktestBroker:
             else:
                 pnl_realized = (old_entry - exec_price) * close_qty
 
-            if abs(signed_qty) <= abs(old_signed) + _EPS:
-                new_entry = old_entry if abs(new_qty_signed) > _EPS else 0.0
+            # Issue 1: qty 비교는 _qty_dust_eps (= qty_step * 1.5) 로.
+            # round_qty 의 floor 잔여 (보통 1 step) 까지 dust 처리.
+            if abs(signed_qty) <= abs(old_signed) + self._qty_dust_eps:
+                new_entry = (
+                    old_entry
+                    if abs(new_qty_signed) > self._qty_dust_eps
+                    else 0.0
+                )
             else:
                 new_entry = exec_price
 
         self._cash += pnl_realized
         self._cash -= fee
 
-        if abs(new_qty_signed) < _EPS:
+        # Issue 1: net qty 가 dust epsilon 이하면 FLAT 로 정리.
+        # 마틴게일 N add → 한 close fill 후 broker net 에 1 step 잔여가
+        # 남는 케이스를 자동 청소. strategy 측 epsilon 가드 불필요.
+        if abs(new_qty_signed) < self._qty_dust_eps:
             self._position = Position(symbol=self.symbol)
         else:
             side = PositionSide.LONG if new_qty_signed > 0 else PositionSide.SHORT
