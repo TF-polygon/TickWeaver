@@ -807,7 +807,7 @@ def _bring_window_to_front(win) -> None:
         print(f"[viz] bring-to-front failed: {type(e).__name__}: {e}")
 
 
-def _attach_description_pane(fplt, html: str):
+def _attach_description_pane(fplt, html: str, table_widget=None):
     """Wrap finplot's chart widget in a QMainWindow with a description pane.
 
     Returns (wrapper, app) on success or (None, None) on failure.
@@ -820,6 +820,10 @@ def _attach_description_pane(fplt, html: str):
         - We REMOVE the chart widget from fplt.windows so finplot will not
           try to refresh / show it again (would crash on win.axs lookup).
         - The caller is responsible for wrapper.show() + app.exec().
+
+    Issue 4 Step 4: `table_widget` (PositionTableWidget) 이 주어지면 하단의
+    description 영역을 horizontal splitter (desc | table) 로 wrap. None 이면
+    기존처럼 desc 만 표시.
     """
     try:
         from pyqtgraph.Qt import QtCore, QtWidgets
@@ -861,10 +865,25 @@ def _attach_description_pane(fplt, html: str):
             f"font-size: 11px; }}"
         )
         desc.setMinimumHeight(100)
-        splitter.addWidget(desc)
+
+        # Issue 4 Step 4: 하단을 horizontal splitter (desc | table) 로 wrap.
+        # table_widget=None 이면 desc 만 추가 (기존 동작).
+        if table_widget is not None:
+            bottom_pane = QtWidgets.QSplitter(
+                QtCore.Qt.Orientation.Horizontal, wrapper
+            )
+            bottom_pane.addWidget(desc)
+            bottom_pane.addWidget(table_widget)
+            # desc 1 : table 2 — 표가 더 넓게.
+            bottom_pane.setStretchFactor(0, 1)
+            bottom_pane.setStretchFactor(1, 2)
+            bottom_pane.setHandleWidth(4)
+            splitter.addWidget(bottom_pane)
+        else:
+            splitter.addWidget(desc)
         splitter.setStretchFactor(0, 4)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([520, 140])
+        splitter.setSizes([520, 220 if table_widget is not None else 140])
         splitter.setHandleWidth(4)
 
         wrapper.setCentralWidget(splitter)
@@ -1270,7 +1289,100 @@ def show_replay(
     # Phase F3: 4-way intent-aware markers (Open/Close x Long/Short).
     # x is snapped to the candle that contains the fill timestamp; y stays
     # at fill_price so a wick fill still lands inside the wick visually.
+    #
+    # Issue 3 Step 5b: hover tooltip — 위 visual marker 위에 invisible
+    # ScatterPlotItem 을 한 layer 더 추가해서 sigHovered 만 받음. tooltip
+    # 데이터는 build_marker_tooltips 가 _classify_fills_by_intent 와 동일
+    # 매칭 로직으로 생성하므로 두 list 가 1:1 매칭.
+    import pyqtgraph as _pg
+
     intent_groups = _classify_fills_by_intent(recorder.fills)
+
+    # Step 5b: tooltip 데이터 build + TextItem 본체
+    _tooltip_data: dict = {
+        "open_long": [], "close_long": [],
+        "open_short": [], "close_short": [],
+    }
+    try:
+        from tickweaver.analytics.positions import build_marker_tooltips
+        _tooltip_lev = float(getattr(recorder, "leverage", 1.0) or 1.0)
+        _tooltip_data = build_marker_tooltips(
+            recorder.fills, leverage=_tooltip_lev
+        )
+    except Exception as e:
+        print(f"[viz] marker tooltip data skipped: {type(e).__name__}: {e}")
+
+    _tooltip_item = None
+    try:
+        _tooltip_item = _pg.TextItem(
+            "",
+            anchor=(0, 1.0),
+            color=(255, 255, 255),
+            fill=_pg.mkBrush(30, 30, 30, 220),
+            border=_pg.mkPen(180, 180, 180),
+        )
+        _tooltip_item.setZValue(100)
+        price_ax.addItem(_tooltip_item)
+        _tooltip_item.hide()
+    except Exception as e:
+        print(f"[viz] tooltip TextItem skipped: {type(e).__name__}: {e}")
+        _tooltip_item = None
+
+    _INTENT_LABEL = {
+        "open_long":   "Open Long",
+        "close_long":  "Close Long",
+        "open_short":  "Open Short",
+        "close_short": "Close Short",
+    }
+
+    def _format_marker_tooltip(info: dict) -> str:
+        intent = info["intent"]
+        label = _INTENT_LABEL.get(intent, intent)
+        ts_str = pd.Timestamp(info["timestamp"]).strftime("%Y-%m-%d %H:%M:%S")
+        if intent.startswith("open_"):
+            return (
+                f"Order #{info['order_no']}\n"
+                f"{ts_str}\n"
+                f"{label}\n"
+                f"Margin: {info['margin']:.2f} USDT\n"
+                f"Entry:  {info['price']:.2f}"
+            )
+        # close_*
+        closed = info.get("closed_orders") or []
+        if len(closed) <= 1:
+            head = f"Order #{closed[0]}" if closed else "Order #?"
+            pnl_label = "PnL"
+        else:
+            head = "Orders " + ", ".join(f"#{n}" for n in closed)
+            pnl_label = "PnL Total"
+        pnl = info.get("pnl")
+        pnl_str = f"{pnl:+.2f}" if pnl is not None else "—"
+        return (
+            f"{head}\n"
+            f"{ts_str}\n"
+            f"{label}\n"
+            f"{pnl_label}: {pnl_str} USDT\n"
+            f"Exit:   {info['price']:.2f}"
+        )
+
+    def _on_marker_hover(_plot, points, _ev):
+        if _tooltip_item is None:
+            return
+        if not points:
+            _tooltip_item.hide()
+            return
+        info = points[0].data()
+        if not isinstance(info, dict):
+            _tooltip_item.hide()
+            return
+        try:
+            _tooltip_item.setText(_format_marker_tooltip(info))
+            pos = points[0].pos()
+            _tooltip_item.setPos(pos.x(), pos.y())
+            _tooltip_item.show()
+        except Exception:
+            _tooltip_item.hide()
+
     _marker_specs = (
         ("open_long",   "^", _OPEN_LONG_COLOR),
         ("close_long",  "v", _CLOSE_LONG_COLOR),
@@ -1290,6 +1402,46 @@ def show_replay(
         except TypeError:
             item = fplt.plot(s, color=color, ax=price_ax)
         _style_marker(item, color)
+
+        # Step 5b: invisible hover scatter — marker 위치에 transparent 점
+        # 을 한 겹 더 깔아서 sigHovered 만 받음. visual marker 와 좌표 동일.
+        if _tooltip_item is None:
+            continue
+        tt_data = _tooltip_data.get(key, [])
+        if len(pts) != len(tt_data):
+            print(
+                f"[viz] hover skipped for {key}: marker/tooltip count "
+                f"mismatch {len(pts)} vs {len(tt_data)}"
+            )
+            continue
+        try:
+            # finplot 의 candle x 축은 정수 bar index. snapped timestamp →
+            # int index 로 변환.
+            x_indices: list[int] = []
+            for snapped_ts in xs_snap:
+                pos_idx = candle_index.searchsorted(
+                    pd.Timestamp(snapped_ts), side="left"
+                )
+                pos_idx = max(0, min(int(pos_idx), len(candle_index) - 1))
+                x_indices.append(pos_idx)
+            hover_item = _pg.ScatterPlotItem(
+                x=x_indices,
+                y=ys,
+                symbol="o",
+                size=_MARKER_SIZE * 2,   # marker 보다 큰 hover 영역
+                brush=_pg.mkBrush(0, 0, 0, 0),   # transparent
+                pen=_pg.mkPen(0, 0, 0, 0),       # transparent
+                data=tt_data,
+                hoverable=True,
+            )
+            hover_item.setZValue(50)
+            price_ax.addItem(hover_item)
+            hover_item.sigHovered.connect(_on_marker_hover)
+        except Exception as e:
+            print(
+                f"[viz] hover scatter for {key} failed: "
+                f"{type(e).__name__}: {e}"
+            )
 
     # Indicator lines per panel. Collect (name, panel, color) for description.
     indicator_specs: list[tuple[str, str, str]] = []
@@ -1357,6 +1509,24 @@ def show_replay(
         indicator_specs=indicator_specs,
         marker_specs=marker_legend,
     )
+    # Issue 4 Step 4: 포지션 히스토리 표 위젯 생성. recorder.fills 와 leverage
+    # 를 build_position_history 에 전달. PyQt 미설치 등으로 실패하면 None
+    # 으로 두고 _attach_description_pane 이 desc-only 모드로 동작.
+    table_widget = None
+    try:
+        from tickweaver.analytics.positions import build_position_history
+        from tickweaver.viz.position_table import PositionTableWidget
+        _leverage = float(getattr(recorder, "leverage", 1.0) or 1.0)
+        _history_rows = build_position_history(
+            recorder.fills,
+            leverage=_leverage,
+            bar_timestamps=candle_index,
+        )
+        table_widget = PositionTableWidget(rows=_history_rows)
+    except Exception as e:
+        print(f"[viz] position table skipped: {type(e).__name__}: {e}")
+        table_widget = None
+
     # finplot must finish its internal bookkeeping (axs / overlay_axs /
     # autoscale) BEFORE we reparent the chart widget into our wrapper.
     try:
@@ -1364,7 +1534,7 @@ def show_replay(
     except Exception as e:
         print(f"[viz] fplt.refresh() warning: {type(e).__name__}: {e}")
 
-    wrapper, app = _attach_description_pane(fplt, html)
+    wrapper, app = _attach_description_pane(fplt, html, table_widget=table_widget)
 
     if wrapper is not None and app is not None:
         # Custom show path: we own the QMainWindow lifetime.
