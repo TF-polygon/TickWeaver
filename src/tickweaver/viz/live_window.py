@@ -35,6 +35,11 @@ if TYPE_CHECKING:
     from tickweaver.viz.recorder import EventRecorder
 
 
+# Phase V14~V18 마우스 진단 토글. True 로 바꾸면 ViewBox/scene mouse hook
+# dump 와 [VIZ DRAG] 추적이 stderr 로 다시 출력됨 (default OFF = silent).
+DEBUG_MOUSE: bool = False
+
+
 # Dark navy palette
 _BG = "#0F1A2E"
 _PLOT_BG = "#0F1A2E"
@@ -1093,39 +1098,40 @@ def show_replay(
                 print(f"[VIZ {label} probe err] {type(_e).__name__}: {_e}",
                       file=sys.stderr, flush=True)
 
-        try:
-            # pyqtgraph 버전 + PanMode/RectMode 실제 값. mouseMode 가
-            # PanMode 와 RectMode 중 어느 쪽인지 사용자 환경에서 확인.
+        if DEBUG_MOUSE:
             try:
-                print(f"[VIZ pg.__version__]={pg.__version__!r}",
-                      file=sys.stderr, flush=True)
-            except Exception:
-                pass
-            try:
-                _pm = getattr(pg.ViewBox, "PanMode", "<missing>")
-                _rm = getattr(pg.ViewBox, "RectMode", "<missing>")
-                print(f"[VIZ pg.ViewBox.PanMode]={_pm!r} RectMode={_rm!r}",
-                      file=sys.stderr, flush=True)
-            except Exception:
-                pass
+                # pyqtgraph 버전 + PanMode/RectMode 실제 값. mouseMode 가
+                # PanMode 와 RectMode 중 어느 쪽인지 사용자 환경에서 확인.
+                try:
+                    print(f"[VIZ pg.__version__]={pg.__version__!r}",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+                try:
+                    _pm = getattr(pg.ViewBox, "PanMode", "<missing>")
+                    _rm = getattr(pg.ViewBox, "RectMode", "<missing>")
+                    print(f"[VIZ pg.ViewBox.PanMode]={_pm!r} RectMode={_rm!r}",
+                          file=sys.stderr, flush=True)
+                except Exception:
+                    pass
 
-            _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
-            _dump_vb("before", _vb0)
-            # finplot 글로벌 변수 후보 출력
-            try:
-                import finplot as _fplt_mod
-                _maybe = ("right_click_zoom", "left_click_zoom",
-                          "right_click_mouse_zoom", "left_drag_pan",
-                          "right_drag_pan", "lock_x_axis")
-                for _k in _maybe:
-                    if hasattr(_fplt_mod, _k):
-                        print(f"[VIZ fplt.{_k}] {getattr(_fplt_mod, _k)!r}",
-                              file=sys.stderr, flush=True)
-            except Exception:
-                pass
-        except Exception as _e:
-            print(f"[VIZ before probe err] {type(_e).__name__}: {_e}",
-                  file=sys.stderr, flush=True)
+                _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
+                _dump_vb("before", _vb0)
+                # finplot 글로벌 변수 후보 출력
+                try:
+                    import finplot as _fplt_mod
+                    _maybe = ("right_click_zoom", "left_click_zoom",
+                              "right_click_mouse_zoom", "left_drag_pan",
+                              "right_drag_pan", "lock_x_axis")
+                    for _k in _maybe:
+                        if hasattr(_fplt_mod, _k):
+                            print(f"[VIZ fplt.{_k}] {getattr(_fplt_mod, _k)!r}",
+                                  file=sys.stderr, flush=True)
+                except Exception:
+                    pass
+            except Exception as _e:
+                print(f"[VIZ before probe err] {type(_e).__name__}: {_e}",
+                      file=sys.stderr, flush=True)
 
         # (b) 강화 monkeypatch — vb 인스턴스의 *실제 타입* 자체에 class-level
         # override + raw Qt event 까지 finplot override 제거.
@@ -1205,7 +1211,7 @@ def show_replay(
                 _drag_counter[0] += 1
                 # 처음 5 회 + 매 50 회마다 한 줄 (stderr 폭주 방지)
                 _i = _drag_counter[0]
-                if _i <= 5 or _i % 50 == 0:
+                if DEBUG_MOUSE and (_i <= 5 or _i % 50 == 0):
                     print(
                         f"[VIZ DRAG #{_i}] button={ev.button()} "
                         f"mode={self.state.get('mouseMode')} "
@@ -1229,8 +1235,9 @@ def show_replay(
             try:
                 vb.mouseDragEvent = _force_pan_drag.__get__(vb, type(vb))
             except Exception as _e:
-                print(f"[VIZ drag bind err] {_e}",
-                      file=sys.stderr, flush=True)
+                if DEBUG_MOUSE:
+                    print(f"[VIZ drag bind err] {_e}",
+                          file=sys.stderr, flush=True)
             try:
                 vb.wheelEvent = _stock_wheel.__get__(vb, type(vb))
             except Exception:
@@ -1244,7 +1251,7 @@ def show_replay(
                 except Exception:
                     pass
 
-        if _patched_types:
+        if DEBUG_MOUSE and _patched_types:
             print(f"[VIZ patched class count] {len(_patched_types)}",
                   file=sys.stderr, flush=True)
 
@@ -1252,18 +1259,20 @@ def show_replay(
         # 만약 patch 후에도 mouseDragEvent 의 출처가 finplot.* 이면
         # class-level setattr 가 silent fail 한 것. 그 경우 다른 hook
         # 지점을 찾아야 함.
-        try:
-            _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
-            _dump_vb("after", _vb0)
-        except Exception:
-            pass
+        if DEBUG_MOUSE:
+            try:
+                _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
+                _dump_vb("after", _vb0)
+            except Exception:
+                pass
     except Exception as _e:
-        try:
-            import sys
-            print(f"[VIZ mouse fix err] {type(_e).__name__}: {_e}",
-                  file=sys.stderr, flush=True)
-        except Exception:
-            pass
+        if DEBUG_MOUSE:
+            try:
+                import sys
+                print(f"[VIZ mouse fix err] {type(_e).__name__}: {_e}",
+                      file=sys.stderr, flush=True)
+            except Exception:
+                pass
 
     fplt.candlestick_ochl(df[["open", "close", "high", "low"]], ax=price_ax)
 
