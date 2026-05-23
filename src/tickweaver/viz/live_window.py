@@ -1377,7 +1377,7 @@ def show_replay(
     def _on_marker_hover(_plot, points, _ev):
         if _tooltip_item is None:
             return
-        if not points:
+        if len(points) == 0:
             _tooltip_item.hide()
             return
         info = points[0].data()
