@@ -1442,6 +1442,7 @@ def show_replay(
                 pen=_pg.mkPen(0, 0, 0, 0),       # transparent
                 data=tt_data,
                 hoverable=True,
+                tip=None,   # pyqtgraph 기본 'x/y/data' 툴팁 끔 — 커스텀 tooltip 만 표시
             )
             hover_item.setZValue(50)
             price_ax.addItem(hover_item)
