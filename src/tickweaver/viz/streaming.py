@@ -164,3 +164,70 @@ def auto_y_range(
     if drag_on or not lows or not highs:
         return None
     return fit_y_range(lows, highs, pad_frac)
+
+
+# ── playback state machine (unit #4) ───────────────────────────────────────
+class StreamClock:
+    """Playback controller for the streaming replay.
+
+    The GUI fires a timer at a fixed cadence and asks :meth:`ticks_this_frame`
+    how many recorded ticks to consume on that frame. Speed is a multiplier of
+    one tick per frame; fractional speeds (e.g. 0.25x) accumulate so a tick is
+    consumed every Nth frame, and high speeds (e.g. 16x) consume many per frame.
+
+    While paused, no ticks are consumed and the fractional accumulator is
+    frozen — resuming never produces a catch-up burst. The drag toggle flips
+    :attr:`auto_follow`: drag OFF means the view follows the forming candle and
+    auto-rescales; drag ON hands pan/zoom to the user.
+    """
+
+    def __init__(self, speed: float = 1.0) -> None:
+        self._paused: bool = False
+        self._speed: float = max(0.0, float(speed))
+        self._drag_on: bool = False
+        self._accum: float = 0.0
+
+    # ── pause / resume ─────────────────────────────────────────────────
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
+
+    def toggle_pause(self) -> bool:
+        self._paused = not self._paused
+        return self._paused
+
+    # ── speed ──────────────────────────────────────────────────────────
+    @property
+    def speed(self) -> float:
+        return self._speed
+
+    def set_speed(self, speed: float) -> None:
+        self._speed = max(0.0, float(speed))
+
+    # ── drag / auto-follow ─────────────────────────────────────────────
+    @property
+    def drag_on(self) -> bool:
+        return self._drag_on
+
+    def set_drag(self, on: bool) -> None:
+        self._drag_on = bool(on)
+
+    @property
+    def auto_follow(self) -> bool:
+        return not self._drag_on
+
+    # ── per-frame consumption ──────────────────────────────────────────
+    def ticks_this_frame(self) -> int:
+        """Number of ticks to consume on this timer fire (0 while paused)."""
+        if self._paused:
+            return 0
+        self._accum += self._speed
+        n = int(self._accum)   # floor (accumulator is non-negative)
+        self._accum -= n
+        return n
