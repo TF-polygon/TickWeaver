@@ -18,7 +18,9 @@ dist/
 venv/
 
 # data / logs / reports (do not commit)
-data/
+# NOTE: anchored to repo root so the src/tickweaver/data/ source package is
+# NOT ignored (previously a bare `data/` rule hid the whole module from git).
+/data/
 logs/
 reports/
 
