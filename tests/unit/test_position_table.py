@@ -5,6 +5,8 @@ pytest-qt 의 qtbot fixture 로 위젯 생성 + 토글 동작 확인. 헤드리�
 
 from __future__ import annotations
 
+import csv
+
 import pandas as pd
 import pytest
 
@@ -192,3 +194,68 @@ def test_set_rows_refreshes_table(qtbot):
     w.set_rows([_open_row(order_no=1), _close_row(order_no=1, pnl=2.0, cum_pnl=2.0)])
     assert w.n_rows == 2
     assert w._table.item(1, 6).text() == "+2.00"
+
+
+# ── CSV export (Polish Work B) ─────────────────────────────
+def _read_csv(path) -> list[list[str]]:
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        return list(csv.reader(f))
+
+
+def test_export_csv_empty_only_header(qtbot, tmp_path):
+    """빈 표 → 보이는 컬럼 header 만, 데이터 row 없음. Holding Bars(숨김) 제외."""
+    w = PositionTableWidget(rows=[])
+    qtbot.addWidget(w)
+    out = tmp_path / "empty.csv"
+    w.export_csv(out)
+    data = _read_csv(out)
+    assert len(data) == 1
+    assert data[0][0] == "#"
+    assert "Fee (USDT)" in data[0]
+    assert "Cum. Fee (USDT)" in data[0]
+    assert "Holding Bars" not in data[0]   # default hidden → 제외
+
+
+def test_export_csv_single_row_precise_values(qtbot, tmp_path):
+    """값은 표(반올림)보다 정밀하게 — Fee 표시 0.05 이어도 CSV 는 0.0475."""
+    rows = [_close_row(order_no=1, pnl=3.0, cum_pnl=3.0, fee=0.0475, cum_fee=0.0475)]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
+    out = tmp_path / "single.csv"
+    w.export_csv(out)
+    header, row = _read_csv(out)
+    assert row[header.index("Side")] == "Close"
+    assert row[header.index("PnL (USDT)")] == "3"        # 정밀 numeric (no +/.00)
+    assert row[header.index("Fee (USDT)")] == "0.0475"   # 정밀 (표는 0.05)
+
+
+def test_export_csv_multiple_with_holding_bars(qtbot, tmp_path):
+    """Holding Bars 토글 ON → 컬럼 포함, 값 채워짐. open row holding bars 는 빈 칸."""
+    rows = [
+        _open_row(order_no=1, fee=0.05),
+        _close_row(
+            order_no=1, pnl=3.0, cum_pnl=3.0, holding_bars=7, fee=0.0475, cum_fee=0.0975
+        ),
+    ]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
+    w._hb_checkbox.setChecked(True)
+    out = tmp_path / "multi.csv"
+    w.export_csv(out)
+    data = _read_csv(out)
+    assert len(data) == 3                      # header + 2 rows
+    assert "Holding Bars" in data[0]
+    hb = data[0].index("Holding Bars")
+    assert data[2][hb] == "7"                  # close row
+    assert data[1][hb] == ""                   # open row (None)
+
+
+def test_export_csv_excludes_hidden_holding_bars(qtbot, tmp_path):
+    """기본(토글 OFF) → Holding Bars 컬럼 CSV 에서 제외."""
+    rows = [_close_row(order_no=1, pnl=1.0, cum_pnl=1.0, holding_bars=5)]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
+    out = tmp_path / "hidden.csv"
+    w.export_csv(out)
+    data = _read_csv(out)
+    assert "Holding Bars" not in data[0]
