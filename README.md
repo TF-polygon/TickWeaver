@@ -3,7 +3,7 @@
 > A backtest engine for OHLCV-based trading strategies. Reconstructs intra-bar
 > price paths as **synthesized ticks**, then runs your strategy on top of them.
 
-[![tests](https://img.shields.io/badge/tests-92%20passed-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-391%20passed-brightgreen)]()
 [![hypothesis](https://img.shields.io/badge/hypothesis-2380%2B%20cases-success)]()
 [![python](https://img.shields.io/badge/python-3.11+-blue)]()
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)]()
@@ -54,11 +54,11 @@ python scripts/download_data.py --exchange binance --symbol "BTC/USDT:USDT" \
     --timeframe 1h --since 2024-01-01 --until 2024-07-01
 
 # 3. Run a backtest. --strategy auto-resolves to strategies/<name>.py
-python scripts/run_backtest.py --strategy rsi_mean_reversion
+python scripts/run_backtest.py --strategy my_strategy
 
 # 4. (optional) Add --viz to open an interactive chart after the run
 pip install -r requirements-viz.txt
-python scripts/run_backtest.py --strategy rsi_mean_reversion --viz
+python scripts/run_backtest.py --strategy my_strategy --viz
 ```
 
 Open `reports/<strategy>_<UTC ts>/report.html` in a browser, or pass `--viz`
@@ -66,8 +66,9 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## What you get
 
-- **Six built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`, `MACD`,
-  `BollingerBands`. Common contract: `update / value / is_warm / reset`.
+- **Seven built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`,
+  `SuperTrend`, `MACD`, `BollingerBands`. Common contract:
+  `update / value / is_warm / reset`.
   Count-based (gap-safe), deterministic.
 - **All four major order types**: `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`.
   LIMIT fills as maker (no slippage). STOP triggers as taker. Lookahead
@@ -96,7 +97,7 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 ## Strategy file example
 
 ```python
-# strategies/rsi_mean_reversion.py
+# strategies/my_strategy.py  — an illustrative example (RSI mean reversion)
 from tickweaver.strategy.indicators import RSI
 
 # Trading parameters live as module constants - edit here to tune.
@@ -121,19 +122,19 @@ def on_bar(bar):
         api.close_position()
 ```
 
-That's it. Run with:
+That's it. Save it under `strategies/` and run with (use your own file name):
 
 ```bash
-python scripts/run_backtest.py --strategy rsi_mean_reversion
+python scripts/run_backtest.py --strategy my_strategy
 ```
 
 `--strategy` accepts any of these — all resolve to the same file:
 
 ```bash
---strategy rsi_mean_reversion
---strategy rsi_mean_reversion.py
---strategy strategies/rsi_mean_reversion.py
---strategy /abs/path/to/rsi_mean_reversion.py
+--strategy my_strategy
+--strategy my_strategy.py
+--strategy strategies/my_strategy.py
+--strategy /abs/path/to/my_strategy.py
 ```
 
 See [`strategies/_reference.md`](strategies/_reference.md) for the full
@@ -152,8 +153,8 @@ each bar closes. Indicators update on `bar.close`, just like a live bot
 that polls closed candles. Orders submitted in `on_bar` fill from the
 first tick of the next bar, so every fill lands at a bar boundary.
 
-Reference: [`strategies/rsi_mean_reversion.py`](strategies/rsi_mean_reversion.py)
-— RSI < 30 entry, RSI > 70 exit.
+For example, an RSI strategy that enters when RSI < 30 and exits when
+RSI > 70 — signal computed on bar close, fills at the next bar boundary.
 
 ### Pattern 2 — `on_bar` entry + `on_tick` exit (recommended for SL/TP)
 
@@ -162,8 +163,8 @@ synthesized tick**, so exits can fire inside a bar's wick at the actual
 price the wick reached — not at bar close. This is where the synthesized
 tick path earns its keep.
 
-Reference: [`strategies/ema_market_sl_tp.py`](strategies/ema_market_sl_tp.py)
-— EMA(12/26) golden cross entry, on_tick SL (-1.0%) / TP (+1.5%) exit.
+For example, an EMA(12/26) golden-cross entry with a per-tick SL / TP exit —
+the exit fires inside the wick at the price the wick actually reached.
 
 The diagnostic script below shows the difference empirically: Pattern-1
 records 0% inside-wick fills, while Pattern-2 records a meaningful share
@@ -180,32 +181,24 @@ decisions, so `--viz` on or off produces bit-exact same `final_equity`.
 pip install -r requirements-viz.txt
 
 # 2. Add --viz to any backtest
-python scripts/run_backtest.py --strategy ema_market_sl_tp --viz
+python scripts/run_backtest.py --strategy my_strategy --viz
 ```
 
-### What you see
+The window shows the candles with fill markers, entry→exit pair lines, any
+indicator sub-panels, and a docked position-history table.
 
-- **Candlesticks** — bull green / bear soft red on a dark navy background.
-- **Buy markers** — blue right-pointing triangles (`>`) at each entry fill.
-- **Sell markers** — orange left-pointing triangles (`<`) at each exit fill.
-- **Pair lines** — dashed blue lines connecting each entry to its exit,
-  so round-trip P&L is visible at a glance.
-- **Marker hover tooltips** — hover a fill marker to see its Order #, side,
-  entry/exit price (at the symbol's price precision), and round-trip P&L.
-- **Indicator sub-panels** — indicators bound to a non-price panel (e.g.
-  `RSI`) render in their own panel, X-linked to and panning with the price.
-- **Position history table** (docked below the chart) — one row per
-  position open/close: `#`, Timestamp, Order #, Side, Margin, Entry Price,
-  PnL, Cum. PnL, **Fee**, and **Cum. Fee** (open rows show their own entry
-  fee; close rows the distributed exit fee). Toggle the optional
-  `Holding Bars` column with the checkbox. **Right-click → "Export to
-  CSV…"** saves the visible table (UTF-8, full-precision values).
+### Interacting with the chart
 
-Markers are aligned to the candle column they belong to. The y-coordinate
-is the actual fill price, so when an exit happens inside a wick the marker
-sits visibly within the wick — not at the bar's close. Entry Price and the
-tooltip prices use the symbol's own decimal precision (e.g. binance
-`BTC/USDT:USDT` shows 1 decimal), auto-detected from CCXT market info.
+- **Indicator panels** — bind an indicator from your strategy with
+  `api.bind_indicator("RSI", rsi)`. One whose `PANEL` is not `"price"` (e.g.
+  `RSI`) opens its own sub-panel, X-linked to and panning with the price;
+  `"price"` indicators overlay on the candles.
+- **Position table columns** — toggle the **Show Fees** (Fee / Cum. Fee) and
+  **Show Holding Bars** columns with the checkboxes above the table.
+- **Export to CSV** — right-click the position table → **Export to CSV…** to
+  save the currently visible columns (UTF-8, full-precision values).
+- **Marker / curve hover** — hover a fill marker (or a balance-curve point in
+  streaming mode) for a tooltip with the trade details.
 
 ### Chart controls (finplot defaults)
 
@@ -215,13 +208,55 @@ tooltip prices use the symbol's own decimal precision (e.g. binance
 | Drag | Pan left / right |
 | Double click | Fit view to data |
 
+### Streaming replay (`--viz --stream`)
+
+Add `--stream` to `--viz` to **replay the backtest as a live animation**
+instead of drawing everything at once. Each candle grows from its open tick
+by tick — the body extends, the wicks trail, and the colour flips bull / bear
+by current-price-vs-open — then closes and the next bar begins. Fill markers,
+trade pair lines, indicator sub-panels, the position table, and a realized
+**balance curve** all update in step with the replay. It stays post-hoc and
+deterministic: `--stream` does not change `final_equity`.
+
+```bash
+python scripts/run_backtest.py --strategy my_strategy --config futures.yaml --viz --stream
+```
+
+<!-- IMAGE PLACEHOLDER (animated demo) — drop the gif at docs/img/streaming_replay.gif -->
+![Streaming replay — candles grow tick by tick with live fills, indicators, and a balance curve](docs/img/streaming_replay.gif)
+
+**Playback controls** (bottom bar):
+
+| Control | Effect |
+|---|---|
+| **Pause / Resume** | Freeze / resume tick consumption. When the replay ends the button becomes **↻ Replay** — click to replay from the start. |
+| **Speed slider** | Ticks consumed per frame: `1x · 2x · 8x · 64x · 128x · 256x` (default `128x`). Low = watch a single candle form; high = replay a long run quickly. |
+| **Drag toggle** | **OFF** (default): the view auto-follows the forming candle and auto-rescales Y so a tall bar stays framed. **ON**: free pan / wheel-zoom, with Y still auto-fitting to the candles in view. |
+
+**Live elements**
+
+- **Candle animation** — open → growing body → wick trail → close → next bar,
+  recoloured bull / bear by current price vs open.
+- **Fill markers & pair lines** — each entry / exit marker and its dashed
+  connecting line appear at the moment the close arrow does.
+- **Indicator sub-panels** — reveal bar by bar as the replay reaches them.
+- **Position history table** — rows appear as trades close. Toggle the
+  **Show Fees** and **Show Holding Bars** columns with the checkboxes; drag the
+  handle between the table and the balance curve to set their width split.
+- **Balance curve** — realized account balance after each closed trade
+  (X = close count, starting at initial capital). Hover any point for a tooltip
+  with the trade number, date, balance, and that trade's PnL.
+
+<!-- IMAGE PLACEHOLDER (window layout) — drop the screenshot at docs/img/streaming_layout.png -->
+![Streaming window — position table beside the realized balance curve](docs/img/streaming_layout.png)
+
 ## Verification: did intra-bar fills actually happen?
 
 A common question: "I'm using synthesized ticks, but are my fills really
 landing inside bars, or are they all at bar boundaries?" Run the diagnostic:
 
 ```bash
-python scripts/diagnose_fills.py ema_market_sl_tp
+python scripts/diagnose_fills.py my_strategy
 ```
 
 For each fill the script checks whether:
@@ -263,8 +298,9 @@ CCXT OHLCV download
        -> equity.parquet, trades.parquet, fills.csv, metrics.json
        -> equity_curve.png, sample_tick_paths.png
        -> report.html
-  -> (optional) viz.LiveChartHook
-       -> finplot replay window (V2 determinism preserved)
+  -> (optional) viz.LiveChartHook / StreamingChartHook
+       -> finplot replay window — static (--viz) or live streaming
+          (--viz --stream); V2 determinism preserved
 ```
 
 ## Documentation
@@ -282,7 +318,7 @@ CCXT OHLCV download
 
 ## Current status
 
-- **M0~M4 and M6 complete.** 92 tests passing (including 2380+ hypothesis
+- **M0~M4 and M6 complete.** 391 tests passing (including 2380+ hypothesis
   property cases for the C1~C7 contract).
 - **M5 (live trading) archived** to `_archive_live/` per decision D11.
   Restorable later.
@@ -319,5 +355,5 @@ first. Adding a new tick generator, indicator, or fee/slippage model is
 covered there as worked examples.
 
 When opening a PR:
-- run `pytest --hypothesis-show-statistics` and ensure all 92+ tests pass
+- run `pytest --hypothesis-show-statistics` and ensure all 391+ tests pass
 - keep new modules import-clean (no circular imports across layers)
