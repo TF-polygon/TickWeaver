@@ -85,8 +85,10 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
   into module globals. No json side-files — the yaml config under
   `configs/` defines the environment, the .py defines the strategy.
 - **Optional chart visualization**: `--viz` opens a finplot window with
-  candles, fill markers, and trade pair lines. Post-hoc only — does not
-  affect backtest determinism.
+  candles, fill markers, trade pair lines, indicator sub-panels, and a
+  docked position-history table (with per-cycle fees + CSV export). Price
+  precision is derived per symbol from CCXT market info. Post-hoc only —
+  does not affect backtest determinism.
 - **Fill diagnostic tool**: `scripts/diagnose_fills.py` reports whether
   each fill landed at a bar boundary or inside a wick, so you can verify
   empirically that synthesized ticks are being exercised.
@@ -188,10 +190,22 @@ python scripts/run_backtest.py --strategy ema_market_sl_tp --viz
 - **Sell markers** — orange left-pointing triangles (`<`) at each exit fill.
 - **Pair lines** — dashed blue lines connecting each entry to its exit,
   so round-trip P&L is visible at a glance.
+- **Marker hover tooltips** — hover a fill marker to see its Order #, side,
+  entry/exit price (at the symbol's price precision), and round-trip P&L.
+- **Indicator sub-panels** — indicators bound to a non-price panel (e.g.
+  `RSI`) render in their own panel, X-linked to and panning with the price.
+- **Position history table** (docked below the chart) — one row per
+  position open/close: `#`, Timestamp, Order #, Side, Margin, Entry Price,
+  PnL, Cum. PnL, **Fee**, and **Cum. Fee** (open rows show their own entry
+  fee; close rows the distributed exit fee). Toggle the optional
+  `Holding Bars` column with the checkbox. **Right-click → "Export to
+  CSV…"** saves the visible table (UTF-8, full-precision values).
 
 Markers are aligned to the candle column they belong to. The y-coordinate
 is the actual fill price, so when an exit happens inside a wick the marker
-sits visibly within the wick — not at the bar's close.
+sits visibly within the wick — not at the bar's close. Entry Price and the
+tooltip prices use the symbol's own decimal precision (e.g. binance
+`BTC/USDT:USDT` shows 1 decimal), auto-detected from CCXT market info.
 
 ### Chart controls (finplot defaults)
 

@@ -157,7 +157,7 @@ python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
 | 플래그 | 기본값 | 설명 |
 |---|---|---|
 | `--strategy <name>` | (필수) | 전략 (자동 해석 — `name` / `name.py` / `strategies/name.py` / 절대경로) |
-| `--config <path>` | `configs/default.yaml` | 백테스트 환경 yaml. 단순 파일명 입력 시 `configs/` 자동 prefix |
+| `--config <file>` | `configs/default.yaml` | 백테스트 환경 yaml. **확장자 포함 파일명**(예: `futures.yaml`) 입력 시 `configs/` 자동 prefix. 확장자 없는 `futures` 는 못 찾음 |
 | `--out-dir <path>` | `reports/<strategy>_<UTC ts>/` | 결과 디렉토리 |
 | `--dump-ticks N` | `0` | N 개 봉의 tick path 를 dump |
 | `--no-progress` | 꺼짐 | tqdm 진행 표시줄 끄기 |
@@ -373,7 +373,10 @@ A. [`docs/DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md) 의 확장 시나리오 6가�
 
 **Q. 수수료 / 슬리피지 모델 변경?**
 A. `configs/default.yaml` 의 `execution.commission`, `execution.slippage` 편집.
-모두 % 단위 (0.05 = 0.05%). 0 으로 두면 비활성.
+모두 % 단위 (0.05 = 0.05%). 0 으로 두면 비활성. 거래소·계정별로 수수료가
+다르면 거래소별 config 파일로 관리 (예: `configs/binance.yaml` commission=0.05,
+`configs/bybit.yaml` commission=0.06). `commission` 입력값이 `BpsFeeModel` 로
+전달돼 체결 `fee` 가 계산되고, viz 의 포지션 표 `Fee` 컬럼에 반영된다.
 
 **Q. Sharpe 가 너무 높게 나오는데 의심스러워요.**
 A. 짧은 백테스트 (수십~수백 봉) 는 연환산 과대. CAGR 도 마찬가지. 6개월 이상

@@ -168,7 +168,7 @@ python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
 | Flag | Default | Description |
 |---|---|---|
 | `--strategy <name>` | (required) | Strategy (auto-resolved -- `name` / `name.py` / `strategies/name.py` / abs path) |
-| `--config <path>` | `configs/default.yaml` | Backtest env yaml. Bare filename auto-prefixes under `configs/` |
+| `--config <file>` | `configs/default.yaml` | Backtest env yaml. **Filename with extension** (e.g. `futures.yaml`) auto-prefixes under `configs/`. A bare `futures` (no extension) is not found |
 | `--out-dir <path>` | `reports/<strategy>_<UTC ts>/` | Output directory |
 | `--dump-ticks N` | `0` | Dump tick paths for N sample bars |
 | `--no-progress` | off | Disable tqdm progress bar |
@@ -400,7 +400,11 @@ extension scenarios.
 **Q. How do I change commission / slippage?**
 A. Edit `execution.commission` and `execution.slippage` in
 `configs/default.yaml`. Both use percent units (0.05 = 0.05%). Set to 0
-to disable.
+to disable. When fees differ per exchange/account, keep one config per
+exchange (e.g. `configs/binance.yaml` commission=0.05,
+`configs/bybit.yaml` commission=0.06). The `commission` value feeds
+`BpsFeeModel`, which computes each fill's `fee` and surfaces it in the
+position table's `Fee` column in the viz.
 
 **Q. My Sharpe looks suspiciously high.**
 A. Short backtests (tens to hundreds of bars) over-annualize. Same for
