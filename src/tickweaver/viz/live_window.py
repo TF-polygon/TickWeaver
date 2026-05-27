@@ -286,14 +286,18 @@ def _apply_dark_theme(fplt) -> None:
         pass
 
 
-def _draw_pair_line(fplt, ax, x0, y0, x1, y1, color: str) -> None:
+def _draw_pair_line(fplt, ax, x0, y0, x1, y1, color: str):
+    """Draw a dashed entry→exit line. Returns the line item (so callers that
+    redraw, e.g. the streaming replay, can remove it again)."""
     try:
-        fplt.add_line(
+        return fplt.add_line(
             (x0, y0), (x1, y1),
             color=color, width=1, style="--", ax=ax, interactive=False,
         )
     except TypeError:
-        fplt.add_line((x0, y0), (x1, y1), color=color, width=1, ax=ax, interactive=False)
+        return fplt.add_line(
+            (x0, y0), (x1, y1), color=color, width=1, ax=ax, interactive=False
+        )
 
 
 def _classify_fills_by_intent(fills) -> dict[str, list[tuple]]:

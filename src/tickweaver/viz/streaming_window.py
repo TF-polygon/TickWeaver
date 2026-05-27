@@ -30,6 +30,7 @@ from tickweaver.viz.streaming import (
     StreamClock,
     TickReplayer,
     auto_y_range,
+    build_balance_by_close,
     fit_y_range,
     revealed_count,
 )
@@ -47,8 +48,8 @@ DEFAULT_TICK_INTERVAL_S = 0.03
 # long backtest (a real run is ~hundreds of ticks/bar) quickly. Default is
 # 128x so a full run plays at a brisk pace; drag the slider down to study a
 # single candle forming.
-_SPEED_STEPS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0)
-_SPEED_DEFAULT_IDX = 9   # 128.0x
+_SPEED_STEPS = (1.0, 2.0, 8.0, 64.0, 128.0, 256.0)
+_SPEED_DEFAULT_IDX = 4   # 128.0x
 
 # 4-way intent marker specs (shape, color) — mirrors live_window.
 _MARKER_SPECS = (
@@ -234,7 +235,119 @@ def show_streaming_replay(
     from tickweaver.analytics.positions import build_position_history
     from tickweaver.viz.position_table import PositionTableWidget
 
-    table_widget = PositionTableWidget(rows=[], price_decimals=price_decimals)
+    table_widget = PositionTableWidget(
+        rows=[], price_decimals=price_decimals, show_fees=False,
+    )
+    # Content-fit width as the splitter's initial size (not fixed — the user can
+    # drag the table|curve handle). A minimum keeps it from collapsing away.
+    _table_w = table_widget.fit_width_to_contents(fix=False)
+    table_widget.setMinimumWidth(60)
+
+    # ── balance curve (realized balance after each closed trade) ────────
+    # X = close count (1 point per closed position, X=0 = start at
+    # initial_cash); the curve fills the width left of the table. No Y-axis
+    # labels — a hover tooltip reports the exact value / trade / date / PnL.
+    initial_cash = float(getattr(recorder, "initial_cash", 0.0) or 0.0)
+    curve_widget = pg.PlotWidget()
+    curve_widget.setBackground(lw._BG)
+    _cp = curve_widget.getPlotItem()
+    _cp.setTitle("Balance / closed trades", color=lw._FG, size="9pt")
+    _cp.showGrid(x=True, y=True, alpha=0.12)
+    _cp.setMouseEnabled(x=False, y=False)
+    _cp.hideButtons()
+    _cp.hideAxis("left")                    # hide Y-axis unit labels
+    _bx = _cp.getAxis("bottom")
+    _bx.setPen(pg.mkPen(lw._BORDER))
+    _bx.setTextPen(pg.mkPen(lw._FG))
+    if initial_cash > 0:
+        _cp.addItem(
+            pg.InfiniteLine(
+                pos=initial_cash, angle=0,
+                pen=pg.mkPen("#5A6B85", style=QtCore.Qt.PenStyle.DashLine),
+            )
+        )
+    # line only (straight segments between close points); X is the close index.
+    balance_item = curve_widget.plot([0], [initial_cash], pen=pg.mkPen(lw._BULL, width=1.5))
+
+    # hover tooltip: trade #, date, balance, PnL at the nearest close point.
+    # A QLabel overlay (child of the plot widget), NOT a scene TextItem — a
+    # TextItem is clipped to the viewbox, so near the top the box vanished.
+    # The label is clamped inside the widget and raised, so it stays readable
+    # regardless of cursor height.
+    _curve = {"pts": [{"trade_no": 0, "timestamp": None, "pnl": None,
+                       "balance": initial_cash}]}
+    _curve_tip = QtWidgets.QLabel(curve_widget)
+    _curve_tip.setStyleSheet(
+        "QLabel { background-color: rgba(20,20,20,235); color: #FFFFFF; "
+        "border: 1px solid #B4B4B4; padding: 4px 6px; "
+        "font-family: Consolas, monospace; font-size: 11px; }"
+    )
+    _curve_tip.setVisible(False)
+
+    def _on_curve_hover(scene_pos) -> None:
+        try:
+            if not _cp.sceneBoundingRect().contains(scene_pos):
+                _curve_tip.setVisible(False)
+                return
+            xi = int(round(_cp.vb.mapSceneToView(scene_pos).x()))
+            pts = _curve["pts"]
+            if xi < 0 or xi >= len(pts):
+                _curve_tip.setVisible(False)
+                return
+            d = pts[xi]
+            if d["trade_no"] == 0:
+                txt = f"start\nBalance {d['balance']:,.2f}"
+            else:
+                ts = pd.Timestamp(d["timestamp"]).strftime("%Y-%m-%d %H:%M")
+                txt = (
+                    f"Trade #{d['trade_no']}\n{ts}\n"
+                    f"Balance {d['balance']:,.2f}\nPnL {d['pnl']:+,.2f}"
+                )
+            _curve_tip.setText(txt)
+            _curve_tip.adjustSize()
+            # place near the cursor, then clamp inside the widget so the whole
+            # box stays visible (no clipping when the curve/cursor is high).
+            vp = curve_widget.mapFromScene(scene_pos)
+            x = int(vp.x()) + 12
+            y = int(vp.y()) - _curve_tip.height() - 8
+            x = max(0, min(x, curve_widget.width() - _curve_tip.width()))
+            y = max(0, min(y, curve_widget.height() - _curve_tip.height()))
+            _curve_tip.move(x, y)
+            _curve_tip.setVisible(True)
+            _curve_tip.raise_()
+        except Exception:
+            _curve_tip.setVisible(False)
+
+    try:
+        curve_widget.scene().sigMouseMoved.connect(_on_curve_hover)
+    except Exception as e:
+        print(f"[viz] balance hover wiring failed: {type(e).__name__}: {e}")
+
+    # Hide the tooltip when the cursor leaves the curve widget — sigMouseMoved
+    # stops firing on leave, so without this the box would freeze at its last
+    # spot. An event filter on the viewport catches the Leave event.
+    class _LeaveHider(QtCore.QObject):
+        def eventFilter(self, _obj, ev):
+            if ev.type() == QtCore.QEvent.Type.Leave:
+                _curve_tip.setVisible(False)
+            return False
+
+    _leave_hider = _LeaveHider()
+    curve_widget._leave_hider = _leave_hider   # keep a strong ref
+    curve_widget.viewport().installEventFilter(_leave_hider)
+    curve_widget.installEventFilter(_leave_hider)
+
+    # White-bordered container so the curve reads as distinct from the window
+    # and the table on its left (the right-edge inset is applied in the layout).
+    curve_box = QtWidgets.QFrame()
+    curve_box.setObjectName("curveBox")
+    curve_box.setStyleSheet(
+        "QFrame#curveBox { border: 1px solid #FFFFFF; background-color: %s; }"
+        % lw._BG
+    )
+    _cbl = QtWidgets.QVBoxLayout(curve_box)
+    _cbl.setContentsMargins(1, 1, 1, 1)
+    _cbl.addWidget(curve_widget)
 
     # Precompute fill timestamps (ascending) for reveal bisect.
     fill_ts_sorted = [pd.Timestamp(f.timestamp) for f in recorder.fills]
@@ -248,6 +361,7 @@ def show_streaming_replay(
     _pairs.sort(key=lambda p: pd.Timestamp(p[2]))   # ascending by exit ts
     _pair_exit_ts = [pd.Timestamp(p[2]) for p in _pairs]
     _pairs_drawn = [0]
+    _pair_items: list = []   # drawn line items, tracked so Replay can clear them
 
     # ── reveal state (lines created full above; first _reveal masks to 0) ──
     _seen = {"fills": -1, "lines": {name: -1 for name in line_items}}
@@ -269,6 +383,20 @@ def show_streaming_replay(
         except Exception as e:
             print(f"[viz] streaming table update skipped: {type(e).__name__}: {e}")
 
+    def _update_balance(revealed_fills) -> None:
+        # one point per closed trade; X = close index (0 = start at initial).
+        try:
+            pts = build_balance_by_close(
+                revealed_fills, initial_cash, leverage=leverage,
+                bar_timestamps=candle_index,
+            )
+            _curve["pts"] = pts
+            balance_item.setData(
+                list(range(len(pts))), [p["balance"] for p in pts]
+            )
+        except Exception as e:
+            print(f"[viz] balance curve update skipped: {type(e).__name__}: {e}")
+
     def _reveal() -> None:
         now = replayer.current_tick_ts
         fc = revealed_count(fill_ts_sorted, now)
@@ -277,6 +405,7 @@ def show_streaming_replay(
             revealed = recorder.fills[:fc]
             _update_markers(revealed)
             _update_table(revealed)
+            _update_balance(revealed)
         for name, (item, samples, ts_sorted) in line_items.items():
             sc = revealed_count(ts_sorted, now)
             if sc != _seen["lines"][name]:
@@ -301,12 +430,14 @@ def show_streaming_replay(
                 e_ts, e_p, x_ts, x_p = p[0], p[1], p[2], p[3]
                 entry_side = p[4] if len(p) > 4 else "buy"
                 color = lw._PAIR_LONG if entry_side == "buy" else lw._PAIR_SHORT
-                lw._draw_pair_line(
+                _line = lw._draw_pair_line(
                     fplt, price_ax,
                     _x_of(e_ts), float(e_p),
                     _x_of(x_ts), float(x_p),
                     color,
                 )
+                if _line is not None:
+                    _pair_items.append(_line)
             _pairs_drawn[0] = pc
 
     # Constant-width follow window: the X span never changes, so candles keep
@@ -383,7 +514,38 @@ def show_streaming_replay(
     speed_slider.setToolTip("playback speed")
     drag_chk = QtWidgets.QCheckBox("Drag (pan/zoom)")
 
-    def _on_pause() -> None:
+    def _reset_replay() -> None:
+        """Replay from the start: rewind the data and clear every drawn layer."""
+        replayer.reset()
+        for arr in (col_o, col_c, col_h, col_l):
+            arr[:] = [_nan] * n_index
+        _redraw_from[0] = 0
+        for it in _pair_items:
+            try:
+                price_ax.removeItem(it)
+            except Exception:
+                pass
+        _pair_items.clear()
+        _pairs_drawn[0] = 0
+        _seen["fills"] = -1
+        for k in _seen["lines"]:
+            _seen["lines"][k] = -1
+        _state["ended"] = False
+        replayer.advance()                 # re-seed the first bar
+        _sync_cols()
+        cs_item.update_data(_full_df())
+        clock.resume()
+        _reveal()                          # clears markers / table / curve to start
+        _follow_view()
+        _fit_y_to_visible_x()
+
+    def _on_action() -> None:
+        # When the replay has ended the button is a Replay (restart); otherwise
+        # it toggles Pause/Resume.
+        if _state["ended"]:
+            _reset_replay()
+            pause_btn.setText("⏸  Pause")
+            return
         paused = clock.toggle_pause()
         pause_btn.setText("▶  Resume" if paused else "⏸  Pause")
 
@@ -407,7 +569,7 @@ def show_streaming_replay(
         else:
             _follow_view()          # snap back to following the current bar
 
-    pause_btn.clicked.connect(_on_pause)
+    pause_btn.clicked.connect(_on_action)
     speed_slider.valueChanged.connect(_on_speed)
     drag_chk.stateChanged.connect(_on_drag)
 
@@ -446,13 +608,14 @@ def show_streaming_replay(
         if replayer.done and not _state["ended"]:
             _state["ended"] = True
             clock.pause()
-            pause_btn.setText("✓  Replay ended")
+            pause_btn.setText("↻  Replay")   # click to replay from the start
 
     fplt.timer_callback(update, tick_interval_s)
 
-    # ── window assembly (chart | controls | table) ─────────────────────
+    # ── window assembly (chart | controls | [table | balance curve]) ───
     wrapper, app = _wrap_streaming_window(
-        fplt, QtWidgets, QtCore, controls, table_widget, win_title
+        fplt, QtWidgets, QtCore, controls, table_widget, curve_box,
+        _table_w, win_title,
     )
     if wrapper is not None and app is not None:
         wrapper.show()
@@ -464,10 +627,15 @@ def show_streaming_replay(
 
 
 def _wrap_streaming_window(
-    fplt, QtWidgets, QtCore, controls, table_widget, title: str
+    fplt, QtWidgets, QtCore, controls, table_widget, curve_box, table_w, title: str
 ):
-    """Reparent the finplot chart under a QMainWindow with a controls bar and
-    the position table. Returns (wrapper, app) or (None, None) on failure."""
+    """Reparent the finplot chart under a QMainWindow.
+
+    Layout: a single vertical splitter handle separates the chart from a lower
+    pane that stacks the fixed-height controls bar over a horizontal splitter
+    [position table | balance curve]. The vertical handle resizes chart vs
+    table+curve (controls stay put); the horizontal handle lets the user set
+    the table/curve width split. Returns (wrapper, app) or (None, None)."""
     try:
         fplt.refresh()
     except Exception as e:
@@ -485,14 +653,50 @@ def _wrap_streaming_window(
         wrapper = QtWidgets.QMainWindow()
         wrapper.setWindowTitle(title)
 
+        # bottom pane: position table | balance curve in a HORIZONTAL splitter
+        # so the user can drag the width split. Table starts at its content
+        # width; curve takes the rest and gets extra on window resize. Wrapped
+        # in a container whose right margin insets the curve from the edge.
+        bottom_split = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        bottom_split.addWidget(table_widget)
+        bottom_split.addWidget(curve_box)
+        bottom_split.setStretchFactor(0, 0)   # table keeps its width
+        bottom_split.setStretchFactor(1, 1)   # curve absorbs extra space
+        bottom_split.setHandleWidth(6)
+        curve_box.setMinimumWidth(120)
+        try:
+            total = max(int(table_w) + 400, int(table_w) + 120)
+            bottom_split.setSizes([int(table_w), total - int(table_w)])
+        except Exception:
+            pass
+
+        bottom = QtWidgets.QWidget()
+        bl = QtWidgets.QHBoxLayout(bottom)
+        bl.setContentsMargins(0, 2, 8, 4)
+        bl.setSpacing(0)
+        bl.addWidget(bottom_split)
+
+        # Group the controls bar + bottom into one lower pane so the splitter
+        # has a SINGLE handle (chart vs lower). The controls bar keeps a fixed
+        # height; dragging the handle resizes only the chart and the
+        # table+curve, never the Pause/Speed/Drag row in between.
+        controls.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        lower = QtWidgets.QWidget()
+        lower_l = QtWidgets.QVBoxLayout(lower)
+        lower_l.setContentsMargins(0, 0, 0, 0)
+        lower_l.setSpacing(0)
+        lower_l.addWidget(controls, stretch=0)
+        lower_l.addWidget(bottom, stretch=1)
+
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, wrapper)
         splitter.addWidget(chart_widget)
-        splitter.addWidget(controls)
-        splitter.addWidget(table_widget)
+        splitter.addWidget(lower)
         splitter.setStretchFactor(0, 6)
-        splitter.setStretchFactor(1, 0)
-        splitter.setStretchFactor(2, 2)
-        splitter.setSizes([520, 40, 200])
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([500, 260])
         splitter.setHandleWidth(4)
 
         wrapper.setCentralWidget(splitter)
