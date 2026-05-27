@@ -90,22 +90,34 @@ def main(
         help="open a finplot replay window after the backtest finishes "
              "(requires: pip install -r requirements-viz.txt)",
     ),
+    stream: bool = typer.Option(
+        False,
+        "--stream",
+        help="with --viz, replay the backtest as a live streaming animation "
+             "(candles grow tick by tick, with playback controls) instead of "
+             "the static all-at-once replay. No effect without --viz.",
+    ),
 ) -> None:
-    """Run a backtest. Optionally open a replay viewer with --viz."""
+    """Run a backtest. Optionally open a replay viewer with --viz (static) or
+    --viz --stream (streaming animation)."""
     resolved_strategy = resolve_strategy_path(strategy)
     resolved_config = _resolve_config_path(config)
+
+    if stream and not viz:
+        typer.echo("NOTE: --stream has no effect without --viz; ignoring.")
 
     chart_hook = None
     if viz:
         try:
-            from tickweaver.viz import LiveChartHook
+            from tickweaver.viz import LiveChartHook, StreamingChartHook
         except ImportError as e:
             typer.echo(
                 f"ERROR: failed to import viz module: {e}\n"
                 "Install with: pip install -r requirements-viz.txt"
             )
             raise typer.Exit(code=2)
-        chart_hook = LiveChartHook(symbol="", timeframe="", block=True)
+        hook_cls = StreamingChartHook if stream else LiveChartHook
+        chart_hook = hook_cls(symbol="", timeframe="", block=True)
 
     result = run_backtest(
         strategy_path=resolved_strategy,

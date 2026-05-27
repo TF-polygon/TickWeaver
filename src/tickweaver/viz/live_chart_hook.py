@@ -62,3 +62,48 @@ class LiveChartHook(EventRecorder):
             timeframe=self.timeframe,
             block=self.block,
         )
+
+
+class StreamingChartHook(EventRecorder):
+    """ChartHook that records events and opens a *streaming* replay on_deinit.
+
+    Same recording contract as LiveChartHook (V2 determinism preserved by the
+    parent EventRecorder), but:
+
+    - records the full tick stream (``max_ticks=None``) so the whole backtest
+      can be replayed start to finish, and
+    - opens viz.streaming_window.show_streaming_replay instead of the static
+      show_replay — candles grow tick by tick, controls + markers + indicators
+      + position table update in real time.
+
+    The unbounded tick record is the one cost difference vs the static viewer;
+    for very long backtests this grows memory (see goal blocked-condition #2).
+    """
+
+    def __init__(
+        self,
+        symbol: str = "",
+        timeframe: str = "",
+        block: bool = True,
+    ) -> None:
+        super().__init__(max_ticks=None)   # full tick record for full replay
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.block = bool(block)
+
+    def on_deinit(self, final_equity) -> None:
+        super().on_deinit(final_equity)
+        try:
+            from tickweaver.viz.streaming_window import show_streaming_replay
+        except ImportError as e:
+            raise RuntimeError(
+                "Visualization extras not installed. "
+                "Run: pip install tickweaver[viz]  "
+                "(or: pip install -r requirements-viz.txt)"
+            ) from e
+        show_streaming_replay(
+            self,
+            symbol=self.symbol,
+            timeframe=self.timeframe,
+            block=self.block,
+        )

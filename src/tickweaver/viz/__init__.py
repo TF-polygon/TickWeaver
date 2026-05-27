@@ -13,14 +13,16 @@ from tickweaver.viz.events import (
 from tickweaver.viz.hook import ChartHook, NullHook
 from tickweaver.viz.recorder import EventRecorder
 
-# LiveChartHook imports finplot lazily inside on_deinit; safe to import here.
-from tickweaver.viz.live_chart_hook import LiveChartHook
+# LiveChartHook / StreamingChartHook import finplot lazily inside on_deinit;
+# safe to import here.
+from tickweaver.viz.live_chart_hook import LiveChartHook, StreamingChartHook
 
 __all__ = [
     "ChartHook",
     "NullHook",
     "EventRecorder",
     "LiveChartHook",
+    "StreamingChartHook",
     "CommentEvent",
     "IndicatorRegistrationEvent",
     "IndicatorSampleEvent",
