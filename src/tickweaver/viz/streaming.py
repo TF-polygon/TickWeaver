@@ -105,6 +105,13 @@ class TickReplayer:
         else:
             self._current.update(price)
 
+    def reset(self) -> None:
+        """Rewind to before the first tick (for replay-from-start)."""
+        self._pos = -1
+        self._completed = []
+        self._current = None
+        self._last_tick_ts = None
+
     # ── state ──────────────────────────────────────────────────────────
     @property
     def done(self) -> bool:
@@ -132,6 +139,52 @@ class TickReplayer:
     def current_tick_ts(self) -> "pd.Timestamp | None":
         """Timestamp of the last consumed tick (None before the first)."""
         return self._last_tick_ts
+
+
+# ── realized balance curve (equity per closed trade) ───────────────────────
+def build_balance_by_close(
+    fills,
+    initial_cash: float,
+    leverage: float = 1.0,
+    bar_timestamps=None,
+) -> list[dict]:
+    """Realized balance after each *closing* trade, as equity-per-trade points.
+
+    Returns ``[start, close_1, close_2, ...]`` where each point is a dict:
+      ``trade_no``  - 0 for the start point, then 1, 2, ... per closed position
+      ``timestamp`` - close fill timestamp (None for the start point)
+      ``pnl``       - that trade's realized (gross) PnL (None for the start)
+      ``balance``   - account balance there (initial + cum PnL - cum fee)
+
+    X is the close index (point i sits at x=i; x=0 is the start at
+    initial_cash). The curve only moves when a position closes; it does not
+    stretch with time/bars. Uses the same FIFO accounting as the position table
+    (build_position_history), so curve and table agree. Leverage-independent.
+    """
+    initial = float(initial_cash)
+    pts: list[dict] = [
+        {"trade_no": 0, "timestamp": None, "pnl": None, "balance": initial}
+    ]
+    if not fills:
+        return pts
+    from tickweaver.analytics.positions import build_position_history
+
+    rows = build_position_history(
+        fills, leverage=leverage, bar_timestamps=bar_timestamps
+    )
+    no = 0
+    for r in rows:
+        if r.pnl is not None:   # close row
+            no += 1
+            pts.append(
+                {
+                    "trade_no": no,
+                    "timestamp": r.timestamp,
+                    "pnl": float(r.pnl),
+                    "balance": initial + r.cum_pnl - (r.cum_fee or 0.0),
+                }
+            )
+    return pts
 
 
 # ── progress-driven reveal (unit #5) ───────────────────────────────────────

@@ -176,6 +176,24 @@ def test_replayer_uses_bar_timestamp_for_x():
     assert r.current_bar.timestamp == bar.timestamp
 
 
+def test_replayer_reset_rewinds_to_start():
+    ticks = _ticks_for_bar(0, [100.0, 105.0, 102.0]) + _ticks_for_bar(1, [102.0, 108.0])
+    r = TickReplayer(ticks=ticks, bars=[(0, _bar(0, 100, 105, 100, 102)),
+                                        (1, _bar(1, 102, 108, 102, 108))])
+    while r.advance():
+        pass
+    assert r.done and r.n_consumed == len(ticks)
+    r.reset()
+    assert not r.done
+    assert r.n_consumed == 0
+    assert r.current_bar is None
+    assert r.all_bars == []
+    assert r.current_tick_ts is None
+    # can replay again from the start
+    r.advance()
+    assert r.current_bar.bar_index == 0
+
+
 def test_replayer_empty_ticks_is_done():
     r = TickReplayer(ticks=[], bars=[])
     assert r.done
