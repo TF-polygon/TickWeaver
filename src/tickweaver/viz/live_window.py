@@ -35,11 +35,6 @@ if TYPE_CHECKING:
     from tickweaver.viz.recorder import EventRecorder
 
 
-# Phase V14~V18 마우스 진단 토글. True 로 바꾸면 ViewBox/scene mouse hook
-# dump 와 [VIZ DRAG] 추적이 stderr 로 다시 출력됨 (default OFF = silent).
-DEBUG_MOUSE: bool = False
-
-
 # Dark navy palette
 _BG = "#0F1A2E"
 _PLOT_BG = "#0F1A2E"
@@ -988,291 +983,45 @@ def show_replay(
         price_ax = axes[0]
         sub_axes = {pid: axes[i] for i, pid in enumerate(order) if i > 0}
 
-    # Phase V14: 마우스 LMB drag = pan 강화 + 진단.
-    #
-    # V12 의 class-level mouseDragEvent override 가 안 먹는 경우 = finplot
-    # 이 raw Qt event (mousePressEvent/mouseMoveEvent/mouseReleaseEvent/
-    # wheelEvent) 를 ViewBox 또는 다른 graphic item 에서 직접 받음. 또는
-    # 우리가 mro 에서 못 찾은 다른 ViewBox subclass 가 vb 의 실제 타입.
-    #
-    # 두 가지 동시 시도:
-    #   (a) 진단 dump — vb 의 클래스 mro + 각 mouse method 의 실제 출처를
-    #       stderr 로 출력. 다음 보고로 finplot 의 정확한 hook 지점 노출.
-    #   (b) 강화 monkeypatch — wheelEvent + mousePress/Move/Release 까지
-    #       포함해 vb 의 타입(인스턴스 타입) 자체에 class-level override.
+    # fix/zoomin-issue: 멀티패널 X-link zoom-drift 수정 (아래 블록 주석 참조).
     try:
-        import sys
         import pyqtgraph as pg
-        from pyqtgraph.Qt import QtCore  # noqa: F401  (loaded for side effects)
-
-        _pan_mode = getattr(pg.ViewBox, "PanMode", 3)
-        _stock_drag = pg.ViewBox.mouseDragEvent
-        _stock_click = pg.ViewBox.mouseClickEvent
-        _stock_wheel = pg.ViewBox.wheelEvent
 
         _vbs = [price_ax]
         _vbs.extend(sub_axes.values())
 
-        def _dump_vb(label: str, vb0):
-            try:
-                _cls = type(vb0)
-                _mod = _cls.__module__ or "?"
-                print(f"[VIZ {label} vb class] {_mod}.{_cls.__name__}",
-                      file=sys.stderr, flush=True)
-                if label == "before":
-                    _mro = [
-                        (c.__module__ or "?") + "." + c.__name__
-                        for c in _cls.__mro__
-                    ]
-                    print(f"[VIZ {label} vb mro] {_mro}",
-                          file=sys.stderr, flush=True)
-                _method_names = (
-                    "mouseDragEvent", "mouseClickEvent", "wheelEvent",
-                    "mousePressEvent", "mouseMoveEvent", "mouseReleaseEvent",
-                    "hoverEvent",
-                )
-                for _n in _method_names:
-                    _m = getattr(vb0, _n, None)
-                    if _m is None:
-                        print(f"[VIZ {label} vb.{_n}] <missing>",
-                              file=sys.stderr, flush=True)
-                        continue
-                    _func = getattr(_m, "__func__", _m)
-                    _src_mod = getattr(_func, "__module__", None) or "?"
-                    _src_qn = getattr(_func, "__qualname__", None) or "?"
-                    print(f"[VIZ {label} vb.{_n}] {_src_mod}.{_src_qn}",
-                          file=sys.stderr, flush=True)
-                try:
-                    _mm = vb0.state.get("mouseMode")
-                    print(f"[VIZ {label} vb.state.mouseMode] {_mm}",
-                          file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-                # V18: Y autoRange 가 켜져 있으면 pan 시마다 Y 가 새 X 범위에
-                # 자동 fit 되어 "zoom" 현상 발생. autoRange state 와
-                # autoVisibleOnly 둘 다 dump.
-                try:
-                    _ar = vb0.state.get("autoRange")
-                    _avo = vb0.state.get("autoVisibleOnly")
-                    print(f"[VIZ {label} vb.state.autoRange] {_ar}",
-                          file=sys.stderr, flush=True)
-                    print(f"[VIZ {label} vb.state.autoVisibleOnly] {_avo}",
-                          file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-                # V17: scene 의 class + raw mouse method 출처. 만약 finplot
-                # 이 custom GraphicsScene subclass 를 쓰면 거기서 raw mouse
-                # event 를 가로채서 매 move 마다 작은 zoom 누적 가능.
-                try:
-                    _scene = vb0.scene()
-                    _scls = type(_scene)
-                    _smod = _scls.__module__ or "?"
-                    print(f"[VIZ {label} scene class] {_smod}.{_scls.__name__}",
-                          file=sys.stderr, flush=True)
-                    for _n in ("mousePressEvent", "mouseMoveEvent",
-                               "mouseReleaseEvent", "wheelEvent"):
-                        _m = getattr(_scene, _n, None)
-                        if _m is None:
-                            print(f"[VIZ {label} scene.{_n}] <missing>",
-                                  file=sys.stderr, flush=True)
-                            continue
-                        _func = getattr(_m, "__func__", _m)
-                        _src_mod = getattr(_func, "__module__", None) or "?"
-                        _src_qn = getattr(_func, "__qualname__", None) or "?"
-                        print(f"[VIZ {label} scene.{_n}] {_src_mod}.{_src_qn}",
-                              file=sys.stderr, flush=True)
-                    for _sig_name in ("sigMouseDragged", "sigMouseClicked",
-                                      "sigMouseHover", "sigMouseMoved"):
-                        _sig = getattr(_scene, _sig_name, None)
-                        if _sig is None:
-                            continue
-                        try:
-                            _n_slots = _sig.receivers()
-                        except Exception:
-                            _n_slots = "?"
-                        print(f"[VIZ {label} scene.{_sig_name}] receivers="
-                              f"{_n_slots}", file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-            except Exception as _e:
-                print(f"[VIZ {label} probe err] {type(_e).__name__}: {_e}",
-                      file=sys.stderr, flush=True)
-
-        if DEBUG_MOUSE:
-            try:
-                # pyqtgraph 버전 + PanMode/RectMode 실제 값. mouseMode 가
-                # PanMode 와 RectMode 중 어느 쪽인지 사용자 환경에서 확인.
-                try:
-                    print(f"[VIZ pg.__version__]={pg.__version__!r}",
-                          file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-                try:
-                    _pm = getattr(pg.ViewBox, "PanMode", "<missing>")
-                    _rm = getattr(pg.ViewBox, "RectMode", "<missing>")
-                    print(f"[VIZ pg.ViewBox.PanMode]={_pm!r} RectMode={_rm!r}",
-                          file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-
-                _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
-                _dump_vb("before", _vb0)
-                # finplot 글로벌 변수 후보 출력
-                try:
-                    import finplot as _fplt_mod
-                    _maybe = ("right_click_zoom", "left_click_zoom",
-                              "right_click_mouse_zoom", "left_drag_pan",
-                              "right_drag_pan", "lock_x_axis")
-                    for _k in _maybe:
-                        if hasattr(_fplt_mod, _k):
-                            print(f"[VIZ fplt.{_k}] {getattr(_fplt_mod, _k)!r}",
-                                  file=sys.stderr, flush=True)
-                except Exception:
-                    pass
-            except Exception as _e:
-                print(f"[VIZ before probe err] {type(_e).__name__}: {_e}",
-                      file=sys.stderr, flush=True)
-
-        # (b) 강화 monkeypatch — vb 인스턴스의 *실제 타입* 자체에 class-level
-        # override + raw Qt event 까지 finplot override 제거.
-        #
-        # V16 핵심: mousePressEvent / mouseMoveEvent / mouseReleaseEvent 가
-        # finplot 의 FinViewBox 에 직접 override 되어 있어 (진단으로 확인),
-        # raw Qt event 단계에서 finplot 의 zoom 로직이 실행됨. 이걸 잡으려면
-        # 그 method 들도 같이 처리해야 함. 표준 pg.ViewBox 에는 그 method 가
-        # 정의되어 있지 않으므로 `delattr` 로 finplot override 만 제거해서
-        # mro 상위 (QGraphicsWidget) 의 기본 동작으로 fall through.
-        _patched_types: set = set()
-        _replace_targets = (
-            ("mouseDragEvent", _stock_drag, True),    # pg 에 있음 → 교체
-            ("mouseClickEvent", _stock_click, True),
-            ("wheelEvent", _stock_wheel, True),
-            ("mousePressEvent", None, False),         # pg 에 없음 → delattr
-            ("mouseMoveEvent", None, False),
-            ("mouseReleaseEvent", None, False),
-        )
-        for _ax in _vbs:
-            vb = getattr(_ax, "vb", None) or getattr(
-                _ax, "getViewBox", lambda: None
-            )()
-            if vb is None:
-                continue
-            for _cls in type(vb).__mro__:
-                if _cls is pg.ViewBox:
-                    break
-                if id(_cls) in _patched_types:
+        # fix/zoomin-issue 타깃 수정: finplot 의 FinViewBox.linkedViewChanged
+        # override 가 linked 패널 X-sync 시 update_y_zoom(X 정수 반올림 + 재zoom)
+        # 을 호출 → 멀티패널에서 매 drag/resize 마다 span 이 max_zoom_points(20)
+        # 까지 축소된다 (단일 패널은 link 가 없어 정상 pan). pyqtgraph 네이티브
+        # linkedViewChanged 로 복원하면 서브패널이 price 의 X 를 반올림/재zoom
+        # 없이 그대로 추종 → zoom-drift 제거, pan-together 유지.
+        if len(_vbs) > 1:
+            for _i, _ax in enumerate(_vbs):
+                _vb = getattr(_ax, "vb", None) or getattr(
+                    _ax, "getViewBox", lambda: None
+                )()
+                if _vb is None:
                     continue
-                _patched_types.add(id(_cls))
-                for _attr_name, _stock, _do_replace in _replace_targets:
-                    if _attr_name not in _cls.__dict__:
-                        continue
-                    if _do_replace and _stock is not None:
-                        try:
-                            setattr(_cls, _attr_name, _stock)
-                        except Exception:
-                            pass
-                    else:
-                        # delattr — finplot override 만 제거하고 super 의
-                        # default 가 호출되게 함
-                        try:
-                            delattr(_cls, _attr_name)
-                        except Exception:
-                            pass
-            # state + setMouseMode 정리
-            try:
-                vb.setMouseMode(_pan_mode)
-            except Exception:
-                pass
-            try:
-                vb.state["mouseMode"] = _pan_mode
-            except Exception:
-                pass
-            # V18: Y autoRange 비활성. pan 시마다 Y 가 새 X 범위에 자동 fit
-            # 되는 현상이 사용자에게 "zoom" 으로 보였음. 첫 view 의 Y range
-            # 는 chart 그릴 때 fit 된 채로 시작하고, 그 이후 pan 시에는 Y
-            # 그대로 유지. 사용자가 직접 Y zoom 하려면 vb.enableAutoRange(y)
-            # 호출 (toolbar 의 auto-range 버튼 등) 시점에 다시 켜짐.
-            try:
-                vb.enableAutoRange(axis="y", enable=False)
-            except Exception:
-                pass
-            # V17: instance level 에 진단 wrap + 강제 pan-only mouseDragEvent.
-            # 이 함수는 LMB/MMB/RMB 어떤 button drag 든 무조건 pan 만 수행.
-            # 호출 시점에 stderr 로 print 찍어서 진짜 호출되는지 확인.
-            #
-            # 만약 LMB drag 시 viz 에서 zoom 발생하는데 [VIZ DRAG] 가 안 찍히면
-            # → mouseDragEvent 가 호출 안 되고 다른 path (scene 의 raw event
-            # 또는 별도 signal slot) 에서 zoom 처리.
-            # 찍히면 → drag dispatch 는 우리 함수로 옴. 그래도 zoom 보이면
-            # 동시에 다른 handler 가 zoom 추가 처리.
-            _drag_counter = [0]
-            def _force_pan_drag(self, ev, axis=None):
-                import sys
-                _drag_counter[0] += 1
-                # 처음 5 회 + 매 50 회마다 한 줄 (stderr 폭주 방지)
-                _i = _drag_counter[0]
-                if DEBUG_MOUSE and (_i <= 5 or _i % 50 == 0):
-                    print(
-                        f"[VIZ DRAG #{_i}] button={ev.button()} "
-                        f"mode={self.state.get('mouseMode')} "
-                        f"finish={ev.isFinish()} axis={axis}",
-                        file=sys.stderr, flush=True,
-                    )
-                ev.accept()
-                if ev.isFinish():
-                    return
-                pos = ev.scenePos()
-                lastPos = ev.lastScenePos()
-                dif_x = pos.x() - lastPos.x()
-                dif_y = pos.y() - lastPos.y()
-                tr = self.childGroup.transform()
-                inv_tr, _ok = tr.inverted()
-                p0 = inv_tr.map(pg.QtCore.QPointF(0.0, 0.0))
-                p1 = inv_tr.map(pg.QtCore.QPointF(-dif_x, -dif_y))
-                self._resetTarget()
-                self.translateBy(x=p1.x() - p0.x(), y=p1.y() - p0.y())
-                self.sigRangeChangedManually.emit(self.state["mouseEnabled"])
-            try:
-                vb.mouseDragEvent = _force_pan_drag.__get__(vb, type(vb))
-            except Exception as _e:
-                if DEBUG_MOUSE:
-                    print(f"[VIZ drag bind err] {_e}",
-                          file=sys.stderr, flush=True)
-            try:
-                vb.wheelEvent = _stock_wheel.__get__(vb, type(vb))
-            except Exception:
-                pass
-            # 인스턴스에 raw event override 가 있다면 그것도 제거
-            for _raw in ("mousePressEvent", "mouseMoveEvent",
-                         "mouseReleaseEvent"):
-                try:
-                    if _raw in vb.__dict__:
-                        del vb.__dict__[_raw]
-                except Exception:
-                    pass
+                _cls = type(_vb)
+                if "linkedViewChanged" in _cls.__dict__:
+                    try:
+                        _cls.linkedViewChanged = pg.ViewBox.linkedViewChanged
+                    except Exception:
+                        pass
+                # 서브패널(price 외 linked 패널): native X-sync 는 Y 를 안
+                # 건드리므로, finplot update_y_zoom 의 Y-fit 을 대신해 pyqtgraph
+                # Y auto-fit 을 켠다 → 인디케이터(RSI 등)가 X pan 에 따라 가시
+                # 데이터에 맞춰 계속 보이게. price(_i==0)는 제외(Y 안정 유지).
+                if _i > 0:
+                    try:
+                        _vb.enableAutoRange(axis="y", enable=True)
+                        _vb.setAutoVisible(y=True)
+                    except Exception:
+                        pass
 
-        if DEBUG_MOUSE and _patched_types:
-            print(f"[VIZ patched class count] {len(_patched_types)}",
-                  file=sys.stderr, flush=True)
-
-        # patch 후 동일 dump — patch 가 실제로 method 를 교체했는지 검증.
-        # 만약 patch 후에도 mouseDragEvent 의 출처가 finplot.* 이면
-        # class-level setattr 가 silent fail 한 것. 그 경우 다른 hook
-        # 지점을 찾아야 함.
-        if DEBUG_MOUSE:
-            try:
-                _vb0 = getattr(price_ax, "vb", None) or price_ax.getViewBox()
-                _dump_vb("after", _vb0)
-            except Exception:
-                pass
     except Exception as _e:
-        if DEBUG_MOUSE:
-            try:
-                import sys
-                print(f"[VIZ mouse fix err] {type(_e).__name__}: {_e}",
-                      file=sys.stderr, flush=True)
-            except Exception:
-                pass
+        print(f"[viz] linked-view zoom fix skipped: {type(_e).__name__}: {_e}")
 
     fplt.candlestick_ochl(df[["open", "close", "high", "low"]], ax=price_ax)
 
