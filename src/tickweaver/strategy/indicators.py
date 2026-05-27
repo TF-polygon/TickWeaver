@@ -252,6 +252,116 @@ class ATR:
 
 
 # ---------------------------------------------------------------------------
+# SuperTrend — ATR bands trend filter (bar-level)
+# ---------------------------------------------------------------------------
+class SuperTrend:
+    """SuperTrend trend filter built on ATR.
+
+    Standard algorithm: basic bands = hl2 ± multiplier * ATR, carried forward
+    into "final" bands, with the trend line snapping to the lower band while
+    bullish and the upper band while bearish.
+
+    - .value     — the SuperTrend line (overlay on price; PANEL='price').
+    - .direction — +1 while bullish (uptrend), -1 while bearish. A change in
+                   direction is the signal: -1 -> +1 is a buy, +1 -> -1 a sell.
+
+    Use update_bar(bar) for an OHLCBar, or update(high, low, close).
+    """
+
+    PANEL = "price"
+    SUBVALUES: tuple[str, ...] | None = None
+
+    def __init__(self, period: int = 10, multiplier: float = 3.0) -> None:
+        if period < 1:
+            raise ValueError(f"SuperTrend period must be >= 1, got {period}")
+        if multiplier <= 0:
+            raise ValueError(f"SuperTrend multiplier must be > 0, got {multiplier}")
+        self.period = int(period)
+        self.multiplier = float(multiplier)
+        self._atr = ATR(self.period)
+        self._prev_close: float | None = None
+        self._final_upper: float | None = None
+        self._final_lower: float | None = None
+        self._st: float | None = None
+        self._dir: int | None = None
+
+    def update(self, high: float, low: float, close: float) -> float | None:
+        h, l, c = float(high), float(low), float(close)
+        atr = self._atr.update(h, l, c)
+        if atr is None:
+            self._prev_close = c
+            return None
+
+        hl2 = (h + l) / 2.0
+        basic_upper = hl2 + self.multiplier * atr
+        basic_lower = hl2 - self.multiplier * atr
+
+        if self._st is None:
+            # First computable bar — seed bands + direction from close vs hl2.
+            self._final_upper = basic_upper
+            self._final_lower = basic_lower
+            if c > hl2:
+                self._dir, self._st = 1, basic_lower
+            else:
+                self._dir, self._st = -1, basic_upper
+            self._prev_close = c
+            return self._st
+
+        prev_close = self._prev_close
+        prev_fu = self._final_upper
+        prev_fl = self._final_lower
+
+        # Carry-forward rule: tighten bands unless price has broken through.
+        final_upper = (
+            basic_upper if (basic_upper < prev_fu or prev_close > prev_fu) else prev_fu
+        )
+        final_lower = (
+            basic_lower if (basic_lower > prev_fl or prev_close < prev_fl) else prev_fl
+        )
+
+        if self._st == prev_fu:
+            # Was bearish (line on upper band): flip up if close breaks above.
+            if c > final_upper:
+                self._dir, self._st = 1, final_lower
+            else:
+                self._dir, self._st = -1, final_upper
+        else:
+            # Was bullish (line on lower band): flip down if close breaks below.
+            if c < final_lower:
+                self._dir, self._st = -1, final_upper
+            else:
+                self._dir, self._st = 1, final_lower
+
+        self._final_upper = final_upper
+        self._final_lower = final_lower
+        self._prev_close = c
+        return self._st
+
+    def update_bar(self, bar) -> float | None:
+        return self.update(bar.high, bar.low, bar.close)
+
+    @property
+    def value(self) -> float | None:
+        return self._st
+
+    @property
+    def direction(self) -> int | None:
+        return self._dir
+
+    @property
+    def is_warm(self) -> bool:
+        return self._st is not None
+
+    def reset(self) -> None:
+        self._atr.reset()
+        self._prev_close = None
+        self._final_upper = None
+        self._final_lower = None
+        self._st = None
+        self._dir = None
+
+
+# ---------------------------------------------------------------------------
 # MACD — fast EMA - slow EMA, with signal line + histogram
 # ---------------------------------------------------------------------------
 class MACD:
@@ -377,7 +487,7 @@ class BollingerBands:
         self._lower = None
 
 
-__all__ = ["SMA", "EMA", "RSI", "ATR", "MACD", "BollingerBands"]
+__all__ = ["SMA", "EMA", "RSI", "ATR", "SuperTrend", "MACD", "BollingerBands"]
 
 
 # ---------------------------------------------------------------------------
