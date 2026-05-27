@@ -243,18 +243,24 @@ def show_streaming_replay(
                 _seen["lines"][name] = sc
                 pdi.setData(xs[:sc], ys[:sc])
 
+    # Constant-width follow window: the X span never changes, so candles keep
+    # the same size from the very first bars (no early over-zoom). A right
+    # margin leaves a gap between the live (forming) bar and the chart edge.
+    follow_window = min(VISIBLE_BARS, n_index)
+    right_margin = max(3, round(follow_window * 0.04))
+
     def _follow_view() -> None:
         if not clock.auto_follow:
             return
         bars = replayer.all_bars
         n = len(bars)
-        x1 = n + 1
-        x0 = max(0, x1 - VISIBLE_BARS)
+        x1 = n + right_margin           # gap to the right of the live bar
+        x0 = x1 - follow_window         # fixed width (no clamp) → constant size
         try:
             price_ax.vb.setXRange(x0, x1, padding=0)
         except Exception:
             pass
-        vis = bars[max(0, n - VISIBLE_BARS):]
+        vis = bars[max(0, n - follow_window):]
         rng = auto_y_range(
             [b.low for b in vis], [b.high for b in vis], drag_on=clock.drag_on
         )
