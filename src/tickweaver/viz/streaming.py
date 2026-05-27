@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
+_DEFAULT_PAD_FRAC = 0.08
+
 if TYPE_CHECKING:
     import pandas as pd
 
@@ -122,3 +124,43 @@ class TickReplayer:
     @property
     def n_consumed(self) -> int:
         return self._pos + 1
+
+
+# ── auto Y-rescale (unit #3) ───────────────────────────────────────────────
+def fit_y_range(
+    lows: Sequence[float],
+    highs: Sequence[float],
+    pad_frac: float = _DEFAULT_PAD_FRAC,
+) -> tuple[float, float]:
+    """Y window that contains every visible candle's [low, high] with padding.
+
+    The padding is ``pad_frac`` of the visible span so a tall "장봉" never
+    touches the frame edge. A zero span (all candles flat) falls back to a
+    price-proportional pad so the window is never degenerate.
+    """
+    lo = float(min(lows))
+    hi = float(max(highs))
+    span = hi - lo
+    if span > 1e-12:
+        pad = span * pad_frac
+    else:
+        pad = max(abs(hi), abs(lo)) * pad_frac or 1.0
+    return lo - pad, hi + pad
+
+
+def auto_y_range(
+    lows: Sequence[float],
+    highs: Sequence[float],
+    *,
+    drag_on: bool,
+    pad_frac: float = _DEFAULT_PAD_FRAC,
+) -> tuple[float, float] | None:
+    """Y range to apply this frame, or None to leave Y untouched.
+
+    Drag ON → the user owns the Y axis (free pan/zoom), so return None.
+    Drag OFF (auto-follow) → fit the visible window so the current bar stays
+    on screen. Empty input also returns None.
+    """
+    if drag_on or not lows or not highs:
+        return None
+    return fit_y_range(lows, highs, pad_frac)
