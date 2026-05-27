@@ -16,6 +16,9 @@ LOGS_DIR: Path = PROJECT_ROOT / "logs"
 REPORTS_DIR: Path = PROJECT_ROOT / "reports"
 CONFIGS_DIR: Path = PROJECT_ROOT / "configs"
 STRATEGIES_DIR: Path = PROJECT_ROOT / "strategies"
+# Archived example / experimental strategies live here; resolve_strategy_path
+# falls back to this dir after STRATEGIES_DIR so bare names still work.
+TEST_STRATEGIES_DIR: Path = PROJECT_ROOT / "test_strategy"
 DEFAULT_BACKTEST_CONFIG: Path = CONFIGS_DIR / "default.yaml"
 
 
@@ -57,6 +60,13 @@ def _strategies_dir() -> Path:
     return _self_mod.STRATEGIES_DIR
 
 
+def _test_strategies_dir() -> Path:
+    """Indirection so tests can monkeypatch TEST_STRATEGIES_DIR at runtime."""
+    import tickweaver.utils.paths as _self_mod
+
+    return _self_mod.TEST_STRATEGIES_DIR
+
+
 def resolve_strategy_path(raw):
     """Auto-resolve --strategy argument: strategies/ prefix + auto .py.
 
@@ -66,11 +76,13 @@ def resolve_strategy_path(raw):
       3. raw + .py if missing extension
       4. STRATEGIES_DIR / basename  (only if raw has no path separator)
       5. STRATEGIES_DIR / basename.py
+      6. TEST_STRATEGIES_DIR / basename(.py)  (archived-strategies fallback)
 
     Examples:
-      "rsi_mean_reversion"        -> strategies/rsi_mean_reversion.py
-      "rsi_mean_reversion.py"     -> strategies/rsi_mean_reversion.py (or cwd)
-      "strategies/rsi.py"         -> strategies/rsi.py
+      "supertrend"                -> strategies/supertrend.py
+      "supertrend.py"             -> strategies/supertrend.py (or cwd)
+      "strategies/supertrend.py"  -> strategies/supertrend.py
+      "future_demo"               -> test_strategy/future_demo.py (fallback)
       "/abs/path/x.py"            -> /abs/path/x.py
     """
     raw_path = Path(raw)
@@ -87,11 +99,11 @@ def resolve_strategy_path(raw):
     raw_str = str(raw_path).replace("\\", "/")
     has_separator = "/" in raw_str
     if not has_separator:
-        sdir = _strategies_dir()
-        sub = sdir / raw_path.name
-        candidates.append(sub)
-        if sub.suffix != ".py":
-            candidates.append(sub.with_suffix(".py"))
+        for base in (_strategies_dir(), _test_strategies_dir()):
+            sub = base / raw_path.name
+            candidates.append(sub)
+            if sub.suffix != ".py":
+                candidates.append(sub.with_suffix(".py"))
 
     seen: set[str] = set()
     unique: list[Path] = []

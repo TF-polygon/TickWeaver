@@ -48,7 +48,7 @@ def _patch_data(monkeypatch, df) -> None:
 # ─────────────────────────────────────────────────────────
 def test_recorder_captures_during_real_backtest(tmp_path: Path, monkeypatch) -> None:
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=300, seed=42))
-    strategy = PROJECT_ROOT / "strategies" / "buy_and_hold.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "buy_and_hold.py"
 
     rec = EventRecorder()
     res = run_backtest(
@@ -76,7 +76,7 @@ def test_recorder_captures_during_real_backtest(tmp_path: Path, monkeypatch) -> 
 def test_viz_does_not_change_final_equity(tmp_path: Path, monkeypatch) -> None:
     """V2: chart_hook on/off must produce bit-exact same final_equity."""
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=200, seed=7))
-    strategy = PROJECT_ROOT / "strategies" / "rsi_mean_reversion.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "rsi_mean_reversion.py"
 
     res_no_viz = run_backtest(
         strategy_path=strategy,
@@ -102,7 +102,7 @@ def test_viz_does_not_change_final_equity(tmp_path: Path, monkeypatch) -> None:
 def test_viz_does_not_change_fills(tmp_path: Path, monkeypatch) -> None:
     """V2: fill prices/qtys must be bit-exact regardless of chart_hook."""
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=300, seed=11))
-    strategy = PROJECT_ROOT / "strategies" / "ema_cross.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "ema_cross.py"
 
     res_a = run_backtest(
         strategy_path=strategy,
@@ -203,7 +203,7 @@ def test_api_comment_noop_when_no_chart_hook(tmp_path: Path, monkeypatch) -> Non
 # ─────────────────────────────────────────────────────────
 def test_recorder_fill_count_matches_result(tmp_path: Path, monkeypatch) -> None:
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=200, seed=99))
-    strategy = PROJECT_ROOT / "strategies" / "rsi_mean_reversion.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "rsi_mean_reversion.py"
 
     rec = EventRecorder()
     res = run_backtest(

@@ -37,7 +37,7 @@ def test_buy_and_hold_e2e_smoke(tmp_path: Path, monkeypatch) -> None:
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=300, seed=42))
 
     # 2. buy_and_hold 전략 경로
-    strategy = PROJECT_ROOT / "strategies" / "buy_and_hold.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "buy_and_hold.py"
     assert strategy.exists(), f"buy_and_hold.py not found at {strategy}"
 
     # 3. 백테스트 실행
@@ -67,7 +67,7 @@ def test_determinism_same_seed(tmp_path: Path, monkeypatch) -> None:
     """같은 seed → 같은 final_equity (P3, C7)."""
     _patch_data(monkeypatch, make_synthetic_ohlcv(n_bars=200, seed=7))
 
-    strategy = PROJECT_ROOT / "strategies" / "buy_and_hold.py"
+    strategy = PROJECT_ROOT / "test_strategy" / "buy_and_hold.py"
 
     r1 = run_backtest(
         strategy_path=strategy,

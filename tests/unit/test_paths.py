@@ -71,6 +71,35 @@ def test_resolve_helpful_error_when_missing(monkeypatch, tmp_path: Path):
     assert "hint" in msg
 
 
+def test_resolve_falls_back_to_test_strategy_dir(monkeypatch, tmp_path: Path):
+    """Bare name not in strategies/ resolves under test_strategy/ (archive)."""
+    sdir = tmp_path / "strategies"
+    sdir.mkdir()
+    tdir = tmp_path / "test_strategy"
+    tdir.mkdir()
+    (tdir / "archived.py").write_text("# noop\n", encoding="utf-8")
+    monkeypatch.setattr("tickweaver.utils.paths.STRATEGIES_DIR", sdir)
+    monkeypatch.setattr("tickweaver.utils.paths.TEST_STRATEGIES_DIR", tdir)
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_strategy_path("archived") == tdir / "archived.py"
+
+
+def test_resolve_prefers_strategies_over_test_strategy(monkeypatch, tmp_path: Path):
+    """When both dirs have the name, strategies/ wins (searched first)."""
+    sdir = tmp_path / "strategies"
+    sdir.mkdir()
+    tdir = tmp_path / "test_strategy"
+    tdir.mkdir()
+    (sdir / "dup.py").write_text("# in strategies\n", encoding="utf-8")
+    (tdir / "dup.py").write_text("# in test_strategy\n", encoding="utf-8")
+    monkeypatch.setattr("tickweaver.utils.paths.STRATEGIES_DIR", sdir)
+    monkeypatch.setattr("tickweaver.utils.paths.TEST_STRATEGIES_DIR", tdir)
+    monkeypatch.chdir(tmp_path)
+
+    assert resolve_strategy_path("dup") == sdir / "dup.py"
+
+
 def test_resolve_dotted_path_does_not_search_strategies(monkeypatch, tmp_path: Path):
     """경로 구분자가 있으면 strategies/ fallback 안 함 (사용자가 명시적 경로 의도)."""
     sdir = tmp_path / "strategies"

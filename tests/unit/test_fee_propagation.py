@@ -22,7 +22,7 @@ from tickweaver.viz import EventRecorder
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-_STRATEGY = PROJECT_ROOT / "strategies" / "buy_and_hold.py"
+_STRATEGY = PROJECT_ROOT / "test_strategy" / "buy_and_hold.py"
 
 
 class _StubLoader:

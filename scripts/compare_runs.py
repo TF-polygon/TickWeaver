@@ -6,7 +6,7 @@ Two subcommands:
 
 Examples:
   python scripts/compare_runs.py preview --o 100 --h 110 --l 90 --c 105 --n 64 --seed 42
-  python scripts/compare_runs.py backtest --strategy strategies/ema_cross.py
+  python scripts/compare_runs.py backtest --strategy supertrend
 """
 
 from __future__ import annotations
