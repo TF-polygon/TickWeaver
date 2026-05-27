@@ -16,6 +16,7 @@ OHLCBar once the bar's final tick is consumed.
 
 from __future__ import annotations
 
+import bisect
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
@@ -74,6 +75,7 @@ class TickReplayer:
         self._pos: int = -1   # index of the last consumed tick
         self._completed: list[PartialBar] = []
         self._current: PartialBar | None = None
+        self._last_tick_ts: "pd.Timestamp | None" = None
 
     # ── consumption ────────────────────────────────────────────────────
     def advance(self) -> bool:
@@ -87,6 +89,7 @@ class TickReplayer:
 
     def _consume(self, tick: "Tick") -> None:
         price = float(tick.price)
+        self._last_tick_ts = tick.timestamp
         if self._current is None or tick.bar_index != self._current.bar_index:
             if self._current is not None:
                 self._completed.append(self._current)
@@ -124,6 +127,23 @@ class TickReplayer:
     @property
     def n_consumed(self) -> int:
         return self._pos + 1
+
+    @property
+    def current_tick_ts(self) -> "pd.Timestamp | None":
+        """Timestamp of the last consumed tick (None before the first)."""
+        return self._last_tick_ts
+
+
+# ── progress-driven reveal (unit #5) ───────────────────────────────────────
+def revealed_count(sorted_ts: Sequence["pd.Timestamp"], now_ts) -> int:
+    """Number of items whose timestamp is <= ``now_ts``.
+
+    ``sorted_ts`` must be ascending (fills / indicator samples are recorded in
+    time order). Used to slice fills / samples to the current replay position.
+    """
+    if now_ts is None or not sorted_ts:
+        return 0
+    return bisect.bisect_right(sorted_ts, now_ts)
 
 
 # ── auto Y-rescale (unit #3) ───────────────────────────────────────────────
