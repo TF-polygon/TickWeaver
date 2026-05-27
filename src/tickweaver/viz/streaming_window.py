@@ -30,6 +30,7 @@ from tickweaver.viz.streaming import (
     StreamClock,
     TickReplayer,
     auto_y_range,
+    fit_y_range,
     revealed_count,
 )
 
@@ -42,10 +43,12 @@ VISIBLE_BARS = 150
 DEFAULT_TICK_INTERVAL_S = 0.03
 
 # Discrete speed steps for the slider = ticks consumed per frame. Low end
-# (0.25x) is for watching a single candle form; high end (128x) replays a
-# long backtest (a real run is ~hundreds of ticks/bar) in reasonable time.
-_SPEED_STEPS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0)
-_SPEED_DEFAULT_IDX = 2   # 1.0x
+# (0.25x) is for watching a single candle form; high end (256x) replays a
+# long backtest (a real run is ~hundreds of ticks/bar) quickly. Default is
+# 128x so a full run plays at a brisk pace; drag the slider down to study a
+# single candle forming.
+_SPEED_STEPS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0)
+_SPEED_DEFAULT_IDX = 9   # 128.0x
 
 # 4-way intent marker specs (shape, color) — mirrors live_window.
 _MARKER_SPECS = (
@@ -179,12 +182,16 @@ def show_streaming_replay(
     # ── indicator lines (finplot-managed via fplt.plot) ────────────────
     # Raw pg.PlotDataItems don't render on a sub-panel that has no datasrc of
     # its own. fplt.plot creates the sub-panel datasrc, links its X to price,
-    # and returns an item with update_data. We create each line over its FULL
-    # timeline (so the datasrc is full-size — a growing iloc[:1] slice hits the
-    # same finplot tiny-datasrc tick-label bug as the candles did), then reveal
-    # progressively by NaN-masking unrevealed samples (connect='finite' draws
-    # nothing for NaN). The first _reveal() below masks back to 0 before show.
-    # line_items[name] = (item, full_index, vals, ts_sorted)
+    # and returns an item with update_data.
+    #
+    # Each line is built over the FULL candle timeline (one row per bar, NaN
+    # where there is no sample / not yet revealed). This is load-bearing: a
+    # line's datasrc length must always equal the candle datasrc length. If it
+    # were shorter (e.g. indexed only by its own sample timestamps), every
+    # indicator update_data would make finplot re-clamp the X range to that
+    # shorter xlen and the next candle update_data would restore it — a periodic
+    # left-right jitter, once per revealed sample. connect='finite' hides NaN.
+    # line_items[name] = (item, samples, ts_sorted) with samples=[(x, ts, v)].
     line_items: dict[str, tuple] = {}
     for panel in order:
         ax = price_ax if panel == "price" else sub_axes.get(panel)
@@ -194,25 +201,27 @@ def show_streaming_replay(
             name = track.registration.name
             color = lw._resolve_line_color(track, panel, i)
             style = track.registration.style or {}
-            ts_sorted: list = []
-            vals: list[float] = []
+            samples: list = []
             for s in track.samples:
                 if s.timestamp is None:
                     continue
-                ts_sorted.append(pd.Timestamp(s.timestamp))
-                vals.append(float(s.value))
-            if not ts_sorted:
+                ts = pd.Timestamp(s.timestamp)
+                samples.append((_x_of(ts), ts, float(s.value)))
+            if not samples:
                 continue
-            full_index = pd.DatetimeIndex(ts_sorted)
-            full_series = pd.Series(vals, index=full_index)
+            ts_sorted = [ts for _, ts, _ in samples]
+            full_vals = [_nan] * n_index
+            for xi, _, v in samples:
+                full_vals[xi] = v
             kwargs: dict = {"color": color, "width": style.get("width", 1), "ax": ax}
             if style.get("style") is not None:
                 kwargs["style"] = style["style"]
+            series = pd.Series(full_vals, index=candle_index)
             try:
-                item = fplt.plot(full_series, **kwargs)
+                item = fplt.plot(series, **kwargs)
             except TypeError:
-                item = fplt.plot(full_series, color=color, ax=ax)
-            line_items[name] = (item, full_index, vals, ts_sorted)
+                item = fplt.plot(series, color=color, ax=ax)
+            line_items[name] = (item, samples, ts_sorted)
 
     # ── panel borders + titles (static decoration, same as live_window) ─
     lw._decorate_panel_border(price_ax)
@@ -229,6 +238,16 @@ def show_streaming_replay(
 
     # Precompute fill timestamps (ascending) for reveal bisect.
     fill_ts_sorted = [pd.Timestamp(f.timestamp) for f in recorder.fills]
+
+    # Pair (entry→exit) dotted lines — same as the static viewer. Each pair is
+    # drawn at the moment its CLOSE arrow appears (its exit fill's timestamp is
+    # reached), so the connecting line shows up together with the close marker
+    # that explains it. FIFO-matched, one line per entry fill, coloured by the
+    # entry side (long = blue, short = red).
+    _pairs = lw._make_pair_lines(recorder.fills)
+    _pairs.sort(key=lambda p: pd.Timestamp(p[2]))   # ascending by exit ts
+    _pair_exit_ts = [pd.Timestamp(p[2]) for p in _pairs]
+    _pairs_drawn = [0]
 
     # ── reveal state (lines created full above; first _reveal masks to 0) ──
     _seen = {"fills": -1, "lines": {name: -1 for name in line_items}}
@@ -258,23 +277,43 @@ def show_streaming_replay(
             revealed = recorder.fills[:fc]
             _update_markers(revealed)
             _update_table(revealed)
-        for name, (item, full_index, vals, ts_sorted) in line_items.items():
+        for name, (item, samples, ts_sorted) in line_items.items():
             sc = revealed_count(ts_sorted, now)
             if sc != _seen["lines"][name]:
                 _seen["lines"][name] = sc
-                # revealed samples keep their value; the rest are NaN (hidden)
-                masked = vals[:sc] + [_nan] * (len(vals) - sc)
+                # revealed samples sit at their bar position; the rest are NaN
+                # (hidden) — full candle-length frame keeps the X range stable.
+                masked = [_nan] * n_index
+                for j in range(sc):
+                    xi, _, v = samples[j]
+                    masked[xi] = v
                 try:
-                    item.update_data(pd.Series(masked, index=full_index))
+                    item.update_data(pd.Series(masked, index=candle_index))
                 except Exception as e:
                     print(f"[viz] indicator update skipped ({name}): "
                           f"{type(e).__name__}: {e}")
+
+        # pair lines: draw each entry→exit connector when its close is revealed
+        pc = revealed_count(_pair_exit_ts, now)
+        if pc != _pairs_drawn[0]:
+            for k in range(_pairs_drawn[0], pc):
+                p = _pairs[k]
+                e_ts, e_p, x_ts, x_p = p[0], p[1], p[2], p[3]
+                entry_side = p[4] if len(p) > 4 else "buy"
+                color = lw._PAIR_LONG if entry_side == "buy" else lw._PAIR_SHORT
+                lw._draw_pair_line(
+                    fplt, price_ax,
+                    _x_of(e_ts), float(e_p),
+                    _x_of(x_ts), float(x_p),
+                    color,
+                )
+            _pairs_drawn[0] = pc
 
     # Constant-width follow window: the X span never changes, so candles keep
     # the same size from the very first bars (no early over-zoom). A right
     # margin leaves a gap between the live (forming) bar and the chart edge.
     follow_window = min(VISIBLE_BARS, n_index)
-    right_margin = max(3, round(follow_window * 0.04))
+    right_margin = max(8, round(follow_window * 0.10))
 
     def _follow_view() -> None:
         if not clock.auto_follow:
@@ -293,6 +332,41 @@ def show_streaming_replay(
         )
         if rng is not None:
             fplt.set_y_range(rng[0], rng[1], ax=price_ax)
+
+    def _fit_y_to_visible_x() -> None:
+        """Drag ON: fit Y to the candles inside the *current* X view.
+
+        finplot's FinViewBox manages Y via its own update_y_zoom (not pyqtgraph
+        autorange), and keeps Y frozen while panning — so enabling autorange was
+        ineffective. Instead we read the visible X range and set Y to fit the
+        candles in it ourselves, on every X change (pan/zoom) and every frame.
+        """
+        if not clock.drag_on:
+            return
+        bars = replayer.all_bars
+        if not bars:
+            return
+        try:
+            vr = price_ax.vb.viewRect()
+            lo_i = max(0, int(math.floor(vr.left())))
+            hi_i = min(len(bars) - 1, int(math.ceil(vr.right())))
+        except Exception:
+            return
+        if hi_i < lo_i:
+            return
+        vis = bars[lo_i:hi_i + 1]
+        ymin, ymax = fit_y_range([b.low for b in vis], [b.high for b in vis])
+        try:
+            fplt.set_y_range(ymin, ymax, ax=price_ax)
+        except Exception:
+            pass
+
+    # Re-fit Y whenever the user pans / wheel-zooms X (drag ON), even while
+    # paused. _fit_y_to_visible_x is a no-op when drag is OFF.
+    try:
+        price_ax.vb.sigXRangeChanged.connect(lambda *_: _fit_y_to_visible_x())
+    except Exception as e:
+        print(f"[viz] X-range Y-follow wiring failed: {type(e).__name__}: {e}")
 
     # initial paint
     _reveal()
@@ -320,12 +394,18 @@ def show_streaming_replay(
     def _on_drag(state: int) -> None:
         on = drag_chk.isChecked()
         clock.set_drag(on)
+        vb = price_ax.vb
         try:
-            price_ax.vb.setMouseEnabled(x=on, y=on)
+            # X is the user's to pan / wheel-zoom when ON; Y is always driven by
+            # us (auto-follow when OFF, fit-to-visible-X when ON), so keep the
+            # mouse off Y and finplot's own Y autorange off in both modes.
+            vb.setMouseEnabled(x=on, y=False)
         except Exception:
             pass
-        if not on:
-            _follow_view()   # snap back to following the current bar
+        if on:
+            _fit_y_to_visible_x()   # fit Y to whatever is on screen right now
+        else:
+            _follow_view()          # snap back to following the current bar
 
     pause_btn.clicked.connect(_on_pause)
     speed_slider.valueChanged.connect(_on_speed)
@@ -361,7 +441,8 @@ def show_streaming_replay(
             _sync_cols()
             cs_item.update_data(_full_df())
             _reveal()
-            _follow_view()
+            _follow_view()          # drag OFF: follow X + fit Y
+            _fit_y_to_visible_x()   # drag ON: keep Y fit as the live edge grows
         if replayer.done and not _state["ended"]:
             _state["ended"] = True
             clock.pause()
