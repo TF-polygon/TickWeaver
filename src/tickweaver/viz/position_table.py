@@ -46,6 +46,7 @@ _COLUMNS: tuple[str, ...] = (
     "Holding Bars",
 )
 _HOLDING_BARS_COL: int = 10
+_FEE_COLS: tuple[int, ...] = (8, 9)   # Fee (USDT), Cum. Fee (USDT) — toggleable
 
 # ResizeToContents 로 맞출 컬럼 (짧은 컬럼) vs Stretch (남은 공간 분배)
 _FIXED_COLS: tuple[int, ...] = (0, 1, 2, 3, 10)  # #, Timestamp, Order #, Side, Holding Bars
@@ -99,21 +100,33 @@ class PositionTableWidget(QtWidgets.QWidget):
         rows: "list[PositionRow]",
         parent: QtWidgets.QWidget | None = None,
         price_decimals: int = 2,
+        show_fees: bool = True,
     ) -> None:
         super().__init__(parent)
         self._rows = list(rows)
         self._price_decimals = int(price_decimals)
+        self._fitted = False   # set by fit_width_to_contents(); re-fit on toggle
 
-        # 레이아웃: 상단 체크박스 + 표
+        # 레이아웃: 상단 토글 행 + 표
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        # Holding Bars 토글 체크박스
+        # 토글 행: Show Holding Bars | Show Fees (한 줄에 나란히)
+        toggles = QtWidgets.QHBoxLayout()
+        toggles.setContentsMargins(0, 0, 0, 0)
+        toggles.setSpacing(12)
         self._hb_checkbox = QtWidgets.QCheckBox("Show Holding Bars")
         self._hb_checkbox.setChecked(False)   # default OFF
         self._hb_checkbox.stateChanged.connect(self._on_hb_toggle)
-        layout.addWidget(self._hb_checkbox)
+        toggles.addWidget(self._hb_checkbox)
+        # Fee / Cum. Fee 토글 — 기본값은 show_fees (streaming 은 False 로 좁게).
+        self._fee_checkbox = QtWidgets.QCheckBox("Show Fees")
+        self._fee_checkbox.setChecked(bool(show_fees))
+        self._fee_checkbox.stateChanged.connect(self._on_fee_toggle)
+        toggles.addWidget(self._fee_checkbox)
+        toggles.addStretch(1)
+        layout.addLayout(toggles)
 
         # 표 본체
         self._table = QtWidgets.QTableWidget(self)
@@ -150,6 +163,9 @@ class PositionTableWidget(QtWidgets.QWidget):
 
         # default OFF — Holding Bars 컬럼 hide
         self._table.setColumnHidden(_HOLDING_BARS_COL, True)
+        # Fee / Cum. Fee 컬럼: show_fees 에 따라 초기 표시/숨김.
+        for _c in _FEE_COLS:
+            self._table.setColumnHidden(_c, not bool(show_fees))
 
         # Polish B: 우클릭 컨텍스트 메뉴 → CSV export
         self._table.setContextMenuPolicy(
@@ -201,12 +217,58 @@ class PositionTableWidget(QtWidgets.QWidget):
         self._table.setColumnHidden(
             _HOLDING_BARS_COL, not self._hb_checkbox.isChecked()
         )
+        if self._fitted:
+            self.fit_width_to_contents()   # re-fit to the new visible columns
+
+    def _on_fee_toggle(self, _state: int) -> None:
+        """체크박스 토글 → Fee / Cum. Fee 컬럼 hide/show."""
+        hide = not self._fee_checkbox.isChecked()
+        for c in _FEE_COLS:
+            self._table.setColumnHidden(c, hide)
+        if self._fitted:
+            self.fit_width_to_contents()   # re-fit so the table width follows
 
     # ── 외부 API ───────────────────────────────────────────
     def set_rows(self, rows: "list[PositionRow]") -> None:
         """행 데이터 갱신. (현재는 backtest 종료 1 회 호출 용도, 향후 라이브 갱신 확장 여지.)"""
         self._rows = list(rows)
         self._populate()
+
+    def fit_width_to_contents(self, fix: bool = True) -> int:
+        """Size every visible column to its content/header; return that width.
+
+        fix=True (default): also lock the widget to that width (no stretch) and
+        mark it fitted so column toggles re-fit. fix=False: leave the width
+        free — for a user-draggable splitter — and allow a horizontal scrollbar
+        when the content is wider than the pane.
+
+        Additive — the static viewer never calls it, so its layout is unaffected.
+        """
+        header = self._table.horizontalHeader()
+        for c in range(self._table.columnCount()):
+            header.setSectionResizeMode(
+                c, QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+            )
+        if not fix:
+            self._table.setHorizontalScrollBarPolicy(
+                QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            )
+        self._table.resizeColumnsToContents()
+        w = sum(
+            self._table.columnWidth(c)
+            for c in range(self._table.columnCount())
+            if not self._table.isColumnHidden(c)
+        )
+        w += self._table.frameWidth() * 2
+        sb = self._table.verticalScrollBar()
+        if sb is not None:
+            w += sb.sizeHint().width()
+        w += 8   # widget layout margins (4 + 4) set in __init__
+        w = max(w, 50)
+        if fix:
+            self.setFixedWidth(w)
+            self._fitted = True
+        return w
 
     @property
     def n_rows(self) -> int:
