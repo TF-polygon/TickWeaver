@@ -58,9 +58,9 @@ def _format_signed_money(v: float | None) -> str:
     return "" if v is None else f"{v:+.2f}"
 
 
-def _format_price(v: float) -> str:
-    """BTC/USDT 기준 소수점 둘째 자리. 추후 종목별 정밀도 자동화 후보."""
-    return f"{v:.2f}"
+def _format_price(v: float, decimals: int = 2) -> str:
+    """가격 표기. decimals 는 종목별 정밀도 (Polish C, runner 가 CCXT 에서 추출)."""
+    return f"{v:.{decimals}f}"
 
 
 def _format_ts(ts) -> str:
@@ -80,15 +80,18 @@ class PositionTableWidget(QtWidgets.QWidget):
     Args:
         rows: build_position_history() 가 반환한 PositionRow 리스트.
         parent: Qt parent (보통 dock 컨테이너).
+        price_decimals: Entry Price 표기 소수 자릿수 (Polish C, 종목별 정밀도).
     """
 
     def __init__(
         self,
         rows: "list[PositionRow]",
         parent: QtWidgets.QWidget | None = None,
+        price_decimals: int = 2,
     ) -> None:
         super().__init__(parent)
         self._rows = list(rows)
+        self._price_decimals = int(price_decimals)
 
         # 레이아웃: 상단 체크박스 + 표
         layout = QtWidgets.QVBoxLayout(self)
@@ -153,7 +156,7 @@ class PositionTableWidget(QtWidgets.QWidget):
                 str(row.order_no),                            # Order #
                 row.side,                                     # Side
                 _format_money(row.margin),                    # Margin (USDT)
-                _format_price(row.entry_price),               # Entry Price
+                _format_price(row.entry_price, self._price_decimals),  # Entry Price
                 _format_signed_money(row.pnl),                # PnL (USDT)
                 _format_signed_money(row.cum_pnl),            # Cum. PnL (USDT)
                 "" if row.holding_bars is None

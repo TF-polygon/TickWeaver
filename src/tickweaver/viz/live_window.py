@@ -1305,6 +1305,10 @@ def show_replay(
     # 매칭 로직으로 생성하므로 두 list 가 1:1 매칭.
     import pyqtgraph as _pg
 
+    # Polish C: 종목별 가격 정밀도 (runner 가 CCXT market info 에서 주입).
+    # hover tooltip 의 Entry/Exit 와 position table 의 Entry Price 가 공유.
+    _price_decimals = int(getattr(recorder, "price_decimals", 2) or 2)
+
     intent_groups = _classify_fills_by_intent(recorder.fills)
 
     # Step 5b: tooltip 데이터 build + TextItem 본체
@@ -1354,7 +1358,7 @@ def show_replay(
                 f"{ts_str}\n"
                 f"{label}\n"
                 f"Margin: {info['margin']:.2f} USDT\n"
-                f"Entry:  {info['price']:.2f}"
+                f"Entry:  {info['price']:.{_price_decimals}f}"
             )
         # close_*
         closed = info.get("closed_orders") or []
@@ -1371,7 +1375,7 @@ def show_replay(
             f"{ts_str}\n"
             f"{label}\n"
             f"{pnl_label}: {pnl_str} USDT\n"
-            f"Exit:   {info['price']:.2f}"
+            f"Exit:   {info['price']:.{_price_decimals}f}"
         )
 
     def _on_marker_hover(_plot, points, _ev):
@@ -1532,7 +1536,9 @@ def show_replay(
             leverage=_leverage,
             bar_timestamps=candle_index,
         )
-        table_widget = PositionTableWidget(rows=_history_rows)
+        table_widget = PositionTableWidget(
+            rows=_history_rows, price_decimals=_price_decimals
+        )
     except Exception as e:
         print(f"[viz] position table skipped: {type(e).__name__}: {e}")
         table_widget = None

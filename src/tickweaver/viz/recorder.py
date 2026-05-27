@@ -49,6 +49,9 @@ class EventRecorder(ChartHook):
         # Issue 4 Step 4: leverage injected by runner. Used by show_replay to
         # compute Margin (USDT) = price * qty / leverage for the position table.
         self.leverage: float = 1.0
+        # Polish C: 종목별 가격 정밀도 (runner 가 CCXT market info 에서 주입).
+        # position table 의 Entry Price 표기 소수 자릿수.
+        self.price_decimals: int = 2
         self._final_equity: float | None = None
         self._init_called: bool = False
         self._deinit_called: bool = False

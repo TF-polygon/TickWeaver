@@ -72,8 +72,12 @@ def _resolve_out_dir(strategy_path: Path, override: str | Path | None) -> Path:
     return REPORTS_DIR / f"{strategy_path.stem}_{ts}"
 
 
-def _load_data_from_config(cfg: BacktestConfig) -> pd.DataFrame:
-    """Resolve OHLCV from cfg.data via CcxtLoader (cache first, fetch if needed)."""
+def _load_data_from_config(cfg: BacktestConfig) -> tuple[pd.DataFrame, CcxtLoader]:
+    """Resolve OHLCV from cfg.data via CcxtLoader (cache first, fetch if needed).
+
+    Returns the loader too so the caller can reuse it for symbol precision
+    (Polish C) without building a second client.
+    """
     market_type = _MODE_TO_MARKET.get(cfg.run.mode, "swap")
     loader = CcxtLoader(exchange=cfg.data.exchange, market_type=market_type)
     df = loader.load(
@@ -83,7 +87,7 @@ def _load_data_from_config(cfg: BacktestConfig) -> pd.DataFrame:
         until=cfg.data.end_date,
     )
     df = _slice_period(df, cfg.data.start_date, cfg.data.end_date)
-    return df
+    return df, loader
 
 
 def run_backtest(
@@ -112,7 +116,7 @@ def run_backtest(
     configure_logging(cfg.logging.level)
 
     # Data: cache-first via CcxtLoader, sliced to [start_date, end_date).
-    df = _load_data_from_config(cfg)
+    df, loader = _load_data_from_config(cfg)
     validate_ohlcv_schema(df)
     validate_ohlcv_integrity(df)
 
@@ -142,11 +146,12 @@ def run_backtest(
         BpsFeeModel(cfg.execution.fee_bps) if cfg.execution.fee_bps > 0 else NoFee()
     )
     slippage = build_slippage(cfg.execution.slippage_bps)
-    # Issue 1: broker 와 strategy api 의 qty_step 을 같은 값으로 sync.
-    # broker 의 dust epsilon (= qty_step * 1.5) 이 api.round_qty 의 floor
-    # 잔여를 자동 청소. TODO: 종목별 qty_step 을 yaml 필드로 노출 (현재는
-    # BTC 기준 1e-6 default).
-    qty_step = 1e-6
+    # Polish C: 종목별 가격/qty 정밀도를 CCXT market info 에서 자동 추출
+    # (디스크 캐시 → 1회 fetch → fallback). broker / api 가 같은 qty_step 을
+    # 공유 (Issue 1 의 dust epsilon = qty_step * 1.5). price_decimals 는 viz
+    # 의 가격 표기에 쓰여 chart_hook 으로 주입.
+    precision = loader.get_symbol_precision(symbol)
+    qty_step = precision.qty_step
     broker = BacktestBroker(
         symbol=symbol,
         initial_cash=cfg.run.initial_capital,
@@ -177,6 +182,9 @@ def run_backtest(
         # Issue 4 Step 4: leverage for the position table's Margin (USDT) column.
         if hasattr(chart_hook, "leverage"):
             chart_hook.leverage = float(cfg.run.leverage)
+        # Polish C: 종목별 가격 정밀도 — position table / hover tooltip 가격 표기.
+        if hasattr(chart_hook, "price_decimals"):
+            chart_hook.price_decimals = int(precision.price_decimals)
 
     context = StrategyContext(
         symbol=symbol,
