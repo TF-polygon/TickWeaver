@@ -150,9 +150,18 @@ def show_streaming_replay(
     replayer.advance()
     _sync_cols()
     cs_item = fplt.candlestick_ochl(_full_df(), ax=price_ax)
-    # We own the view while auto-following; finplot autorange must not fight us.
+    # We own the price view while auto-following; finplot autorange must not
+    # fight us. Sub-panels (rsi/macd/...) instead keep Y auto-fit to the
+    # visible window so their indicator lines stay framed as the replay
+    # scrolls (mirrors live_window's multi-panel handling).
     price_ax.vb.disableAutoRange()
     price_ax.vb.setMouseEnabled(x=False, y=False)   # drag OFF by default
+    for _sub_ax in sub_axes.values():
+        try:
+            _sub_ax.vb.enableAutoRange(axis="y", enable=True)
+            _sub_ax.vb.setAutoVisible(y=True)
+        except Exception:
+            pass
 
     # ── marker scatter items (one per intent, grown via setData) ───────
     marker_items: dict[str, Any] = {}
@@ -167,8 +176,15 @@ def show_streaming_replay(
         price_ax.addItem(si)
         marker_items[key] = si
 
-    # ── indicator line items + precomputed (ts, x, y) per track ────────
-    # line_items[name] = (PlotDataItem, ts_sorted, xs, ys)
+    # ── indicator lines (finplot-managed via fplt.plot) ────────────────
+    # Raw pg.PlotDataItems don't render on a sub-panel that has no datasrc of
+    # its own. fplt.plot creates the sub-panel datasrc, links its X to price,
+    # and returns an item with update_data. We create each line over its FULL
+    # timeline (so the datasrc is full-size — a growing iloc[:1] slice hits the
+    # same finplot tiny-datasrc tick-label bug as the candles did), then reveal
+    # progressively by NaN-masking unrevealed samples (connect='finite' draws
+    # nothing for NaN). The first _reveal() below masks back to 0 before show.
+    # line_items[name] = (item, full_index, vals, ts_sorted)
     line_items: dict[str, tuple] = {}
     for panel in order:
         ax = price_ax if panel == "price" else sub_axes.get(panel)
@@ -178,20 +194,25 @@ def show_streaming_replay(
             name = track.registration.name
             color = lw._resolve_line_color(track, panel, i)
             style = track.registration.style or {}
-            pen = pg.mkPen(color, width=style.get("width", 1))
-            pdi = pg.PlotDataItem(pen=pen)
-            ax.addItem(pdi)
             ts_sorted: list = []
-            xs: list[int] = []
-            ys: list[float] = []
+            vals: list[float] = []
             for s in track.samples:
                 if s.timestamp is None:
                     continue
-                ts = pd.Timestamp(s.timestamp)
-                ts_sorted.append(ts)
-                xs.append(_x_of(ts))
-                ys.append(float(s.value))
-            line_items[name] = (pdi, ts_sorted, xs, ys)
+                ts_sorted.append(pd.Timestamp(s.timestamp))
+                vals.append(float(s.value))
+            if not ts_sorted:
+                continue
+            full_index = pd.DatetimeIndex(ts_sorted)
+            full_series = pd.Series(vals, index=full_index)
+            kwargs: dict = {"color": color, "width": style.get("width", 1), "ax": ax}
+            if style.get("style") is not None:
+                kwargs["style"] = style["style"]
+            try:
+                item = fplt.plot(full_series, **kwargs)
+            except TypeError:
+                item = fplt.plot(full_series, color=color, ax=ax)
+            line_items[name] = (item, full_index, vals, ts_sorted)
 
     # ── panel borders + titles (static decoration, same as live_window) ─
     lw._decorate_panel_border(price_ax)
@@ -209,7 +230,7 @@ def show_streaming_replay(
     # Precompute fill timestamps (ascending) for reveal bisect.
     fill_ts_sorted = [pd.Timestamp(f.timestamp) for f in recorder.fills]
 
-    # ── reveal state ───────────────────────────────────────────────────
+    # ── reveal state (lines created full above; first _reveal masks to 0) ──
     _seen = {"fills": -1, "lines": {name: -1 for name in line_items}}
 
     def _update_markers(revealed_fills) -> None:
@@ -237,11 +258,17 @@ def show_streaming_replay(
             revealed = recorder.fills[:fc]
             _update_markers(revealed)
             _update_table(revealed)
-        for name, (pdi, ts_sorted, xs, ys) in line_items.items():
+        for name, (item, full_index, vals, ts_sorted) in line_items.items():
             sc = revealed_count(ts_sorted, now)
             if sc != _seen["lines"][name]:
                 _seen["lines"][name] = sc
-                pdi.setData(xs[:sc], ys[:sc])
+                # revealed samples keep their value; the rest are NaN (hidden)
+                masked = vals[:sc] + [_nan] * (len(vals) - sc)
+                try:
+                    item.update_data(pd.Series(masked, index=full_index))
+                except Exception as e:
+                    print(f"[viz] indicator update skipped ({name}): "
+                          f"{type(e).__name__}: {e}")
 
     # Constant-width follow window: the X span never changes, so candles keep
     # the same size from the very first bars (no early over-zoom). A right
