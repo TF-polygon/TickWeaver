@@ -5,6 +5,7 @@ from __future__ import annotations
 import itertools
 
 import pandas as pd
+import pytest
 
 from tickweaver.analytics.positions import PositionRow, build_position_history
 from tickweaver.core.types import Fill, Side
@@ -13,8 +14,10 @@ from tickweaver.core.types import Fill, Side
 _coid = itertools.count(1)
 
 
-def _fill(side: Side, price: float, qty: float = 1.0, idx: int = 0) -> Fill:
-    """편의 헬퍼. idx 는 시간 슬롯 (시간당 1 step)."""
+def _fill(
+    side: Side, price: float, qty: float = 1.0, idx: int = 0, fee: float = 0.0
+) -> Fill:
+    """편의 헬퍼. idx 는 시간 슬롯 (시간당 1 step). fee 는 그 fill 의 수수료."""
     n = next(_coid)
     return Fill(
         order_id=f"ORD-{n}",
@@ -22,7 +25,7 @@ def _fill(side: Side, price: float, qty: float = 1.0, idx: int = 0) -> Fill:
         side=side,
         qty=qty,
         price=price,
-        fee=0.0,
+        fee=fee,
         timestamp=pd.Timestamp("2024-01-01", tz="UTC") + pd.Timedelta(hours=idx),
     )
 
@@ -261,3 +264,99 @@ def test_holding_bars_for_martingale_close_each_row():
     assert rows[2].holding_bars == 10
     # rows[3] = Close of Order #2 (entry idx=5, exit idx=10) → 5
     assert rows[3].holding_bars == 5
+
+
+# ──────────────────────────────────────────────────────────
+# Fee 분배 (Polish Work A)
+#   - 각 row 가 자기 fill 의 fee 를 표시:
+#       open row  = open fill fee (의 그 row 가 연 qty 비율)
+#       close row = close fill fee * matched_qty / fill.qty
+#   - Cum. Fee = open/close 가리지 않고 row 순 running sum
+# ──────────────────────────────────────────────────────────
+
+
+def test_fee_single_round_trip_per_row():
+    """Buy(fee 0.05) → Sell(fee 0.055): open row 0.05, close row 0.055."""
+    rows = build_position_history(
+        [
+            _fill(Side.BUY, 100.0, 1.0, idx=0, fee=0.05),
+            _fill(Side.SELL, 110.0, 1.0, idx=1, fee=0.055),
+        ],
+        leverage=1.0,
+    )
+    assert rows[0].fee == pytest.approx(0.05)       # open row 자기 fee
+    assert rows[0].cum_fee == pytest.approx(0.05)
+    assert rows[1].fee == pytest.approx(0.055)      # close row 자기 fee
+    assert rows[1].cum_fee == pytest.approx(0.105)  # 누적
+
+
+def test_fee_martingale_split_close_distributes_close_fill_fee():
+    """Buy*2 → Sell qty2(fee 0.095): 두 Close row 가 close fee 를 qty 비율 분배."""
+    rows = build_position_history(
+        [
+            _fill(Side.BUY, 100.0, 1.0, idx=0, fee=0.05),
+            _fill(Side.BUY, 90.0, 1.0, idx=1, fee=0.045),
+            _fill(Side.SELL, 95.0, 2.0, idx=2, fee=0.095),
+        ],
+        leverage=1.0,
+    )
+    assert len(rows) == 4
+    assert rows[0].fee == pytest.approx(0.05)     # Long o1
+    assert rows[1].fee == pytest.approx(0.045)    # Long o2
+    # close fill fee 0.095 / qty 2 = 0.0475 per matched unit
+    assert rows[2].fee == pytest.approx(0.0475)   # Close o1
+    assert rows[3].fee == pytest.approx(0.0475)   # Close o2
+    # Cum. Fee running sum
+    assert rows[0].cum_fee == pytest.approx(0.05)
+    assert rows[1].cum_fee == pytest.approx(0.095)
+    assert rows[2].cum_fee == pytest.approx(0.1425)
+    assert rows[3].cum_fee == pytest.approx(0.19)
+
+
+def test_fee_partial_close_uses_close_fill_qty():
+    """Buy qty2(fee 0.10) → Sell qty1(fee 0.055): close row = 0.055 (fill.qty=1)."""
+    rows = build_position_history(
+        [
+            _fill(Side.BUY, 100.0, 2.0, idx=0, fee=0.10),
+            _fill(Side.SELL, 110.0, 1.0, idx=1, fee=0.055),
+        ],
+        leverage=1.0,
+    )
+    assert len(rows) == 2
+    assert rows[0].fee == pytest.approx(0.10)      # open row full open fee
+    assert rows[1].fee == pytest.approx(0.055)     # close fill fee * 1/1
+    assert rows[1].cum_fee == pytest.approx(0.155)
+
+
+def test_fee_reverse_fill_splits_close_and_open_portions():
+    """Buy q1(fee 0.05) → Sell q3(fee 0.15): close 1 (0.05) + open short 2 (0.10)."""
+    rows = build_position_history(
+        [
+            _fill(Side.BUY, 100.0, 1.0, idx=0, fee=0.05),
+            _fill(Side.SELL, 110.0, 3.0, idx=1, fee=0.15),
+        ],
+        leverage=1.0,
+    )
+    assert len(rows) == 3
+    assert [r.side for r in rows] == ["Long", "Close", "Short"]
+    assert rows[0].fee == pytest.approx(0.05)      # open long
+    # sell fill fee 0.15 / qty 3 = 0.05 per unit
+    assert rows[1].fee == pytest.approx(0.05)      # close 1 unit
+    assert rows[2].fee == pytest.approx(0.10)      # open short 2 units (reverse)
+    # 분배 총합 = sell fill fee 0.15 보존 (close 0.05 + open 0.10)
+    assert rows[1].fee + rows[2].fee == pytest.approx(0.15)
+    assert rows[2].cum_fee == pytest.approx(0.20)  # 0.05 + 0.05 + 0.10
+
+
+def test_fee_zero_yields_zero_not_none():
+    """fee=0 fill → close/open row fee 는 0.0 (None 아님)."""
+    rows = build_position_history(
+        [
+            _fill(Side.BUY, 100.0, 1.0, idx=0, fee=0.0),
+            _fill(Side.SELL, 110.0, 1.0, idx=1, fee=0.0),
+        ],
+        leverage=1.0,
+    )
+    assert rows[0].fee == 0.0
+    assert rows[1].fee == 0.0
+    assert rows[1].cum_fee == 0.0

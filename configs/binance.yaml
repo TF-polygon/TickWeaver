@@ -1,0 +1,38 @@
+# tickweaver — binance futures backtest config.
+#
+# Exchange-specific config. The only field that differs from bybit.yaml is
+# execution.commission — each exchange/account has its own taker fee, so the
+# user keeps one yaml per exchange and sets commission accordingly.
+#
+# Cost fields (commission/slippage/spread) use PERCENT units:
+#   0.05 means 0.05%, NOT 5%.
+
+run:
+  initial_capital: 10000.0          # starting cash in quote currency (USDT)
+  mode: futures                     # short selling allowed
+  leverage: 100.0                   # qty multiplier exposed via api.leverage
+
+data:
+  exchange: binance                 # ccxt exchange id
+  symbol: "BTC/USDT:USDT"           # ccxt symbol notation (USDT-M perpetual)
+  timeframe: "1h"                   # 1m / 5m / 15m / 1h / 4h / 1d ...
+  start_date: "2024-01-01"          # inclusive (YYYY-MM-DD)
+  end_date:   "2024-07-01"          # exclusive (YYYY-MM-DD)
+
+execution:
+  commission: 0.05                  # 0.05 == 0.05% per side (binance taker example)
+  slippage:   0.02                  # 0.02 == 0.02%
+  spread:     0.0                   # 0    == 0.00%
+
+tick_synthesis:
+  generator: uniform                # uniform (default) | bridge
+  n_ticks_min: 8
+  n_ticks_max: 256
+  seed: 42                          # deterministic seed (C7 contract)
+
+reporting:
+  out_dir: null                     # null -> reports/<strategy>_<UTC ts>/
+  dump_ticks: 0
+
+logging:
+  level: INFO                       # DEBUG | INFO | WARNING | ERROR

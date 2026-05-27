@@ -47,6 +47,10 @@ class PositionRow:
         cum_pnl: close row 만 — 누적 합. open 은 None.
         holding_bars: close row 만 + `bar_timestamps` 가 주어진 경우만.
             아니면 None.
+        fee: 그 row 가 대응하는 fill 의 수수료 (Polish A). open row 는 open
+            fill fee (그 row 가 연 qty 비율), close row 는 close fill fee 를
+            matched qty 비율로 분배 (`fill.fee * matched / fill.qty`).
+        cum_fee: open/close 가리지 않고 row 순 running sum.
     """
 
     timestamp: pd.Timestamp
@@ -57,6 +61,8 @@ class PositionRow:
     pnl: float | None
     cum_pnl: float | None
     holding_bars: int | None
+    fee: float | None = None
+    cum_fee: float | None = None
 
 
 def build_position_history(
@@ -88,6 +94,7 @@ def build_position_history(
     open_shorts: list[dict] = []
     next_order_no = 1
     cum_pnl = 0.0
+    cum_fee = 0.0   # Polish A: open/close 가리지 않고 row 순 running sum
 
     def _bar_index(ts: pd.Timestamp) -> int | None:
         if bar_timestamps is None:
@@ -99,6 +106,9 @@ def build_position_history(
         qty_remaining = float(fill.qty)
         ts = pd.Timestamp(fill.timestamp)
         price = float(fill.price)
+        # Polish A: 이 fill 의 fee 를 qty 비율로 분배 (per-unit).
+        fill_qty = float(fill.qty)
+        fee_per_unit = (float(fill.fee) / fill_qty) if fill_qty > 0 else 0.0
 
         if side == "buy":
             # Close shorts FIFO 먼저, 잔여는 새 long 으로.
@@ -107,6 +117,8 @@ def build_position_history(
                 matched = min(s["qty_remaining"], qty_remaining)
                 pnl = (s["price"] - price) * matched   # short PnL 부호 반전
                 cum_pnl += pnl
+                close_fee = fee_per_unit * matched
+                cum_fee += close_fee
                 hb = (
                     None
                     if bar_timestamps is None
@@ -122,6 +134,8 @@ def build_position_history(
                         pnl=pnl,
                         cum_pnl=cum_pnl,
                         holding_bars=hb,
+                        fee=close_fee,
+                        cum_fee=cum_fee,
                     )
                 )
                 s["qty_remaining"] -= matched
@@ -133,6 +147,8 @@ def build_position_history(
                 order_no = next_order_no
                 next_order_no += 1
                 margin = price * qty_remaining / leverage
+                open_fee = fee_per_unit * qty_remaining
+                cum_fee += open_fee
                 rows.append(
                     PositionRow(
                         timestamp=ts,
@@ -143,6 +159,8 @@ def build_position_history(
                         pnl=None,
                         cum_pnl=None,
                         holding_bars=None,
+                        fee=open_fee,
+                        cum_fee=cum_fee,
                     )
                 )
                 open_longs.append(
@@ -159,6 +177,8 @@ def build_position_history(
                 matched = min(lng["qty_remaining"], qty_remaining)
                 pnl = (price - lng["price"]) * matched   # long PnL
                 cum_pnl += pnl
+                close_fee = fee_per_unit * matched
+                cum_fee += close_fee
                 hb = (
                     None
                     if bar_timestamps is None
@@ -174,6 +194,8 @@ def build_position_history(
                         pnl=pnl,
                         cum_pnl=cum_pnl,
                         holding_bars=hb,
+                        fee=close_fee,
+                        cum_fee=cum_fee,
                     )
                 )
                 lng["qty_remaining"] -= matched
@@ -185,6 +207,8 @@ def build_position_history(
                 order_no = next_order_no
                 next_order_no += 1
                 margin = price * qty_remaining / leverage
+                open_fee = fee_per_unit * qty_remaining
+                cum_fee += open_fee
                 rows.append(
                     PositionRow(
                         timestamp=ts,
@@ -195,6 +219,8 @@ def build_position_history(
                         pnl=None,
                         cum_pnl=None,
                         holding_bars=None,
+                        fee=open_fee,
+                        cum_fee=cum_fee,
                     )
                 )
                 open_shorts.append(

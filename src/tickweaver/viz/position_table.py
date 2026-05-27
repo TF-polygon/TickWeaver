@@ -3,10 +3,11 @@
 `analytics.positions.build_position_history` 의 결과 (`list[PositionRow]`)
 를 받아 chart window 의 dock 으로 들어갈 widget 을 생성한다.
 
-기본 8 컬럼:
-    # | Timestamp | Order # | Side | Margin (USDT) | Entry Price | PnL (USDT) | Cum. PnL (USDT)
+기본 10 컬럼:
+    # | Timestamp | Order # | Side | Margin (USDT) | Entry Price | PnL (USDT) |
+    Cum. PnL (USDT) | Fee (USDT) | Cum. Fee (USDT)
 
-옵션 9 번째 컬럼 (`Holding Bars`) 은 상단 체크박스로 토글. default OFF.
+옵션 11 번째 컬럼 (`Holding Bars`) 은 상단 체크박스로 토글. default OFF.
 
 가로 스크롤은 없도록 짧은 컬럼은 ResizeToContents, 금액 컬럼은 남은 공간
 Stretch 로 분배. 세로 스크롤은 행이 많을 때 자동 표시.
@@ -14,10 +15,8 @@ Stretch 로 분배. 세로 스크롤은 행이 많을 때 자동 표시.
 Read-only 표 (편집 불가). vertical header 는 숨김 — `#` 컬럼이 그 역할.
 
 추후 작업 후보 (지금 미구현):
-    * Fee 컬럼 (거래소별 fee 모델 통합 후)
     * row 색상 (Long/Short/Close 배경, PnL 부호 색상)
     * 표 우클릭 → CSV export
-    * 종목별 가격 정밀도 자동 (현재 BTC/USDT 기준 둘째 자리 hardcode)
 """
 
 from __future__ import annotations
@@ -40,13 +39,15 @@ _COLUMNS: tuple[str, ...] = (
     "Entry Price",
     "PnL (USDT)",
     "Cum. PnL (USDT)",
+    "Fee (USDT)",
+    "Cum. Fee (USDT)",
     "Holding Bars",
 )
-_HOLDING_BARS_COL: int = 8
+_HOLDING_BARS_COL: int = 10
 
 # ResizeToContents 로 맞출 컬럼 (짧은 컬럼) vs Stretch (남은 공간 분배)
-_FIXED_COLS: tuple[int, ...] = (0, 1, 2, 3, 8)   # #, Timestamp, Order #, Side, Holding Bars
-_STRETCH_COLS: tuple[int, ...] = (4, 5, 6, 7)    # Margin, Entry, PnL, Cum. PnL
+_FIXED_COLS: tuple[int, ...] = (0, 1, 2, 3, 10)  # #, Timestamp, Order #, Side, Holding Bars
+_STRETCH_COLS: tuple[int, ...] = (4, 5, 6, 7, 8, 9)  # Margin, Entry, PnL, Cum.PnL, Fee, Cum.Fee
 
 
 # ── 포맷터 헬퍼 ─────────────────────────────────────────────
@@ -159,13 +160,15 @@ class PositionTableWidget(QtWidgets.QWidget):
                 _format_price(row.entry_price, self._price_decimals),  # Entry Price
                 _format_signed_money(row.pnl),                # PnL (USDT)
                 _format_signed_money(row.cum_pnl),            # Cum. PnL (USDT)
+                _format_money(row.fee),                       # Fee (USDT)
+                _format_money(row.cum_fee),                   # Cum. Fee (USDT)
                 "" if row.holding_bars is None
                 else str(row.holding_bars),                   # Holding Bars
             )
             for j, text in enumerate(cells):
                 item = QtWidgets.QTableWidgetItem(text)
                 # 숫자/순번 컬럼은 우측 정렬, 텍스트 컬럼은 좌측
-                if j in (0, 2, 4, 5, 6, 7, 8):
+                if j in (0, 2, 4, 5, 6, 7, 8, 9, 10):
                     item.setTextAlignment(
                         QtCore.Qt.AlignmentFlag.AlignRight
                         | QtCore.Qt.AlignmentFlag.AlignVCenter

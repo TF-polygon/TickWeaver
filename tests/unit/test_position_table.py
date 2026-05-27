@@ -23,7 +23,9 @@ pytestmark = pytest.mark.skipif(
 
 
 # ── 헬퍼 ────────────────────────────────────────────────────
-def _open_row(order_no: int, side: str = "Long") -> PositionRow:
+def _open_row(
+    order_no: int, side: str = "Long", fee: float | None = None
+) -> PositionRow:
     return PositionRow(
         timestamp=pd.Timestamp("2024-01-01 00:00:00", tz="UTC"),
         order_no=order_no,
@@ -33,11 +35,18 @@ def _open_row(order_no: int, side: str = "Long") -> PositionRow:
         pnl=None,
         cum_pnl=None,
         holding_bars=None,
+        fee=fee,
+        cum_fee=fee,
     )
 
 
 def _close_row(
-    order_no: int, pnl: float, cum_pnl: float, holding_bars: int | None = 5
+    order_no: int,
+    pnl: float,
+    cum_pnl: float,
+    holding_bars: int | None = 5,
+    fee: float | None = None,
+    cum_fee: float | None = None,
 ) -> PositionRow:
     return PositionRow(
         timestamp=pd.Timestamp("2024-01-01 00:10:00", tz="UTC"),
@@ -48,6 +57,8 @@ def _close_row(
         pnl=pnl,
         cum_pnl=cum_pnl,
         holding_bars=holding_bars,
+        fee=fee,
+        cum_fee=cum_fee,
     )
 
 
@@ -115,7 +126,7 @@ def test_holding_bars_column_hidden_by_default(qtbot):
     w = PositionTableWidget(rows=[_close_row(order_no=1, pnl=1.0, cum_pnl=1.0)])
     qtbot.addWidget(w)
     assert w.holding_bars_visible is False
-    assert w._table.isColumnHidden(8) is True
+    assert w._table.isColumnHidden(10) is True
 
 
 def test_holding_bars_column_shown_after_toggle(qtbot):
@@ -124,9 +135,9 @@ def test_holding_bars_column_shown_after_toggle(qtbot):
     # 체크 → show
     w._hb_checkbox.setChecked(True)
     assert w.holding_bars_visible is True
-    assert w._table.isColumnHidden(8) is False
+    assert w._table.isColumnHidden(10) is False
     # 셀 값 확인
-    assert w._table.item(0, 8).text() == "7"
+    assert w._table.item(0, 10).text() == "7"
 
 
 def test_holding_bars_toggle_back_to_hidden(qtbot):
@@ -142,7 +153,35 @@ def test_holding_bars_empty_cell_when_none(qtbot):
     """open row 등 holding_bars=None 인 경우 빈 셀."""
     w = PositionTableWidget(rows=[_open_row(order_no=1)])
     qtbot.addWidget(w)
+    assert w._table.item(0, 10).text() == ""
+
+
+# ── Fee 컬럼 (Polish Work A) ───────────────────────────────
+def test_close_row_shows_fee_and_cum_fee(qtbot):
+    """close row 의 Fee(8) / Cum. Fee(9) 셀 표시."""
+    rows = [_close_row(order_no=1, pnl=3.0, cum_pnl=3.0, fee=0.0475, cum_fee=0.19)]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
+    assert w._table.item(0, 8).text() == "0.05"   # Fee (2 decimals)
+    assert w._table.item(0, 9).text() == "0.19"   # Cum. Fee
+
+
+def test_open_row_fee_shown_when_present(qtbot):
+    """open row 도 자기 fee 표시 (per-row 설계)."""
+    rows = [_open_row(order_no=1, fee=0.05)]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
+    assert w._table.item(0, 8).text() == "0.05"   # Fee
+    assert w._table.item(0, 9).text() == "0.05"   # Cum. Fee
+
+
+def test_fee_cell_blank_when_none(qtbot):
+    """fee=None 이면 빈 셀."""
+    rows = [_open_row(order_no=1, fee=None)]
+    w = PositionTableWidget(rows=rows)
+    qtbot.addWidget(w)
     assert w._table.item(0, 8).text() == ""
+    assert w._table.item(0, 9).text() == ""
 
 
 # ── set_rows 외부 API ─────────────────────────────────────
