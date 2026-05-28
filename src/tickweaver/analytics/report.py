@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from tickweaver.analytics.equity_curve import plot_equity, plot_sample_ticks
+from tickweaver.analytics.metric_formatting import PRETTY_LABELS, format_metric
 from tickweaver.analytics.metrics import compute_metrics
 from tickweaver.analytics.trades import extract_trades, trades_to_df
 from tickweaver.engine.backtest_engine import BacktestResult
@@ -59,32 +60,12 @@ config: <code>{config}</code></p>
 
 
 def _metrics_table(metrics: dict[str, Any]) -> str:
-    rows = []
-    pretty = {
-        "final_equity": "Final Equity",
-        "initial_cash": "Initial Cash",
-        "total_return": "Total Return",
-        "cagr": "CAGR",
-        "sharpe": "Sharpe",
-        "sortino": "Sortino",
-        "max_drawdown": "Max Drawdown",
-        "calmar": "Calmar",
-        "n_trades": "Trades",
-        "win_rate": "Win rate",
-        "profit_factor": "Profit factor",
-    }
-    for k, label in pretty.items():
-        v = metrics.get(k, "")
-        if isinstance(v, float):
-            if k in ("total_return", "cagr", "max_drawdown", "win_rate"):
-                v_str = f"{v * 100:+.2f}%"
-            elif k == "profit_factor" and v == float("inf"):
-                v_str = "inf"
-            else:
-                v_str = f"{v:.4f}"
-        else:
-            v_str = str(v)
-        rows.append(f"<tr><td>{label}</td><td>{v_str}</td></tr>")
+    # 라벨/포맷은 analytics.metric_formatting 의 SSOT 를 사용. 새 지표를
+    # 추가할 때는 PRETTY_LABELS (와 필요 시 PERCENT_KEYS) 만 갱신하면 된다.
+    rows = [
+        f"<tr><td>{label}</td><td>{format_metric(k, metrics.get(k, ''))}</td></tr>"
+        for k, label in PRETTY_LABELS.items()
+    ]
     return "<table class='metric-table'>" + "\n".join(rows) + "</table>"
 
 

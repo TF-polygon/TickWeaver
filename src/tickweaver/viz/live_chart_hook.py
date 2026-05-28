@@ -15,7 +15,12 @@ This keeps the backtest itself single-threaded (D14) and lookahead-safe.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from tickweaver.viz.recorder import EventRecorder
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 class LiveChartHook(EventRecorder):
@@ -31,6 +36,10 @@ class LiveChartHook(EventRecorder):
         max_ticks: tick deque cap (passed to EventRecorder).
         block: if True (default), the backtest waits in finplot.show() until
                the user closes the window. If False, returns immediately.
+        auto_show: if True (default, back-compat), :meth:`on_deinit` calls
+               :meth:`show` automatically. Set False when the caller (runner,
+               tests) wants to open the window explicitly after attaching
+               extra data such as the equity curve.
     """
 
     def __init__(
@@ -39,14 +48,25 @@ class LiveChartHook(EventRecorder):
         timeframe: str = "",
         max_ticks: int | None = 100_000,
         block: bool = True,
+        auto_show: bool = True,
     ) -> None:
         super().__init__(max_ticks=max_ticks)
         self.symbol = symbol
         self.timeframe = timeframe
         self.block = bool(block)
+        self.auto_show = bool(auto_show)
+        self.equity_curve: pd.DataFrame | None = None
 
-    def on_deinit(self, final_equity) -> None:
-        super().on_deinit(final_equity)
+    def attach_equity_curve(self, eq_df: pd.DataFrame) -> None:
+        """Attach the engine's equity curve so the viz window can render KPIs.
+
+        Called by the runner after the backtest finishes and before
+        :meth:`show` (either via auto_show or an explicit caller).
+        """
+        self.equity_curve = eq_df
+
+    def show(self) -> None:
+        """Open the post-hoc finplot replay window."""
         # Lazy import - only load Qt/finplot when the user actually opted in
         try:
             from tickweaver.viz.live_window import show_replay
@@ -61,7 +81,13 @@ class LiveChartHook(EventRecorder):
             symbol=self.symbol,
             timeframe=self.timeframe,
             block=self.block,
+            equity_curve=self.equity_curve,
         )
+
+    def on_deinit(self, final_equity) -> None:
+        super().on_deinit(final_equity)
+        if self.auto_show:
+            self.show()
 
 
 class StreamingChartHook(EventRecorder):
@@ -85,14 +111,21 @@ class StreamingChartHook(EventRecorder):
         symbol: str = "",
         timeframe: str = "",
         block: bool = True,
+        auto_show: bool = True,
     ) -> None:
         super().__init__(max_ticks=None)   # full tick record for full replay
         self.symbol = symbol
         self.timeframe = timeframe
         self.block = bool(block)
+        self.auto_show = bool(auto_show)
+        self.equity_curve: pd.DataFrame | None = None
 
-    def on_deinit(self, final_equity) -> None:
-        super().on_deinit(final_equity)
+    def attach_equity_curve(self, eq_df: pd.DataFrame) -> None:
+        """Attach the engine's equity curve so the streaming window can render KPIs."""
+        self.equity_curve = eq_df
+
+    def show(self) -> None:
+        """Open the streaming replay window."""
         try:
             from tickweaver.viz.streaming_window import show_streaming_replay
         except ImportError as e:
@@ -106,4 +139,10 @@ class StreamingChartHook(EventRecorder):
             symbol=self.symbol,
             timeframe=self.timeframe,
             block=self.block,
+            equity_curve=self.equity_curve,
         )
+
+    def on_deinit(self, final_equity) -> None:
+        super().on_deinit(final_equity)
+        if self.auto_show:
+            self.show()

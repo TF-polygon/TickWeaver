@@ -68,8 +68,17 @@ def show_streaming_replay(
     timeframe: str = "",
     block: bool = True,
     tick_interval_s: float = DEFAULT_TICK_INTERVAL_S,
+    equity_curve: "pd.DataFrame | None" = None,
 ) -> None:
-    """Open the streaming replay window and play the recorded tick stream."""
+    """Open the streaming replay window and play the recorded tick stream.
+
+    eval_metrics D7: ``equity_curve`` is the engine's per-bar equity DataFrame
+    (BacktestResult.equity_curve). On every trade close the KPI panel slices
+    it to the bars revealed so far and runs ``compute_metrics_incremental``
+    (SSOT with the HTML report). If ``equity_curve`` is None, the panel falls
+    back to trade-only metrics — sharpe / sortino / max_drawdown / calmar
+    render as "—" because there is no equity series to derive them from.
+    """
     try:
         import finplot as fplt
         import pyqtgraph as pg
@@ -349,6 +358,53 @@ def show_streaming_replay(
     _cbl.setContentsMargins(1, 1, 1, 1)
     _cbl.addWidget(curve_widget)
 
+    # ── KPI metric panel (eval_metrics P4 + D7) ────────────────────────
+    # Same MetricPanel widget the static viewer uses. Updates fire from
+    # _reveal() only when a new trade closes (CP3 — close-driven, not per
+    # tick). _last_closed_n tracks how many round-trip trades we've already
+    # reflected; growing past it triggers compute_metrics_incremental over
+    # equity_curve sliced to bars revealed up to current_tick_ts.
+    #
+    # equity_curve=None falls back to trade_only_metrics — sharpe / sortino /
+    # MDD / calmar render as "—" (no equity series to derive them from).
+    from tickweaver.analytics.metrics import compute_metrics_incremental
+    from tickweaver.analytics.trades import extract_trades
+    from tickweaver.viz.metric_panel import MetricPanel, trade_only_metrics
+
+    metric_panel = MetricPanel()
+    _last_closed_n = [0]
+
+    def _update_metrics(revealed_fills) -> None:
+        try:
+            trades = extract_trades(revealed_fills)
+            if len(trades) == _last_closed_n[0]:
+                return   # no new close — short-circuit (CP3)
+            _last_closed_n[0] = len(trades)
+
+            if equity_curve is None or len(equity_curve) < 2:
+                # No engine equity series available — fall back to realized
+                # balance for the final_equity card; the four equity-derived
+                # cards render as "—".
+                running_balance = initial_cash + sum(
+                    (t.pnl - t.fee) for t in trades
+                )
+                metric_panel.update_from_metrics(
+                    trade_only_metrics(trades, initial_cash, running_balance)
+                )
+                return
+
+            now = replayer.current_tick_ts
+            if now is None:
+                return
+            n_rev = int(candle_index.searchsorted(pd.Timestamp(now), side="right"))
+            if n_rev < 2:
+                return   # 1-row equity ⇒ skip until 2nd bar (#8 fix)
+            eq_slice = equity_curve.iloc[:n_rev]
+            metrics = compute_metrics_incremental(trades, eq_slice, initial_cash)
+            metric_panel.update_from_metrics(metrics)
+        except Exception as e:
+            print(f"[viz] metric update skipped: {type(e).__name__}: {e}")
+
     # Precompute fill timestamps (ascending) for reveal bisect.
     fill_ts_sorted = [pd.Timestamp(f.timestamp) for f in recorder.fills]
 
@@ -406,6 +462,7 @@ def show_streaming_replay(
             _update_markers(revealed)
             _update_table(revealed)
             _update_balance(revealed)
+            _update_metrics(revealed)   # eval_metrics P4 — close-driven
         for name, (item, samples, ts_sorted) in line_items.items():
             sc = revealed_count(ts_sorted, now)
             if sc != _seen["lines"][name]:
@@ -530,6 +587,8 @@ def show_streaming_replay(
         _seen["fills"] = -1
         for k in _seen["lines"]:
             _seen["lines"][k] = -1
+        _last_closed_n[0] = 0
+        metric_panel.clear()
         _state["ended"] = False
         replayer.advance()                 # re-seed the first bar
         _sync_cols()
@@ -573,6 +632,9 @@ def show_streaming_replay(
     speed_slider.valueChanged.connect(_on_speed)
     drag_chk.stateChanged.connect(_on_drag)
 
+    # eval_metrics #12: MetricPanel is self-checkable (its QGroupBox title is
+    # the checkbox), so we removed the prior controls-bar `[☑ Metrics]`
+    # checkbox — one toggle, on the panel itself.
     controls = QtWidgets.QWidget()
     cl = QtWidgets.QHBoxLayout(controls)
     cl.setContentsMargins(8, 4, 8, 4)
@@ -612,10 +674,14 @@ def show_streaming_replay(
 
     fplt.timer_callback(update, tick_interval_s)
 
-    # ── window assembly (chart | controls | [table | balance curve]) ───
+    # ── window assembly (chart / controls / metric_panel / [table | curve]) ─
+    # eval_metrics #14: metric_panel is now its own full-width row between the
+    # controls bar and the table+curve row — same pattern as static viz so
+    # the KPI strip gets the full window width instead of competing with the
+    # curve for the right column.
     wrapper, app = _wrap_streaming_window(
-        fplt, QtWidgets, QtCore, controls, table_widget, curve_box,
-        _table_w, win_title,
+        fplt, QtWidgets, QtCore, controls, table_widget,
+        metric_panel, curve_box, _table_w, win_title,
     )
     if wrapper is not None and app is not None:
         wrapper.show()
@@ -627,15 +693,26 @@ def show_streaming_replay(
 
 
 def _wrap_streaming_window(
-    fplt, QtWidgets, QtCore, controls, table_widget, curve_box, table_w, title: str
+    fplt, QtWidgets, QtCore, controls, table_widget,
+    metric_panel, curve_box, table_w, title: str,
 ):
     """Reparent the finplot chart under a QMainWindow.
 
-    Layout: a single vertical splitter handle separates the chart from a lower
-    pane that stacks the fixed-height controls bar over a horizontal splitter
-    [position table | balance curve]. The vertical handle resizes chart vs
-    table+curve (controls stay put); the horizontal handle lets the user set
-    the table/curve width split. Returns (wrapper, app) or (None, None)."""
+    Layout (#14 v2): main vertical splitter mirrors the static viewer 1:1 —
+
+        [chart] / [metric_panel] / [lower]
+
+    so the KPI strip sits immediately under the chart and directly above the
+    position table, with nothing wedged between them. ``lower`` is a single
+    container whose QVBoxLayout stacks
+
+        bottom_split = [position table | balance curve]   (variable height)
+        controls     = Pause / Speed / Drag footer        (fixed height)
+
+    The playback controls live at the very bottom as a footer (media-player
+    pattern) so the chart / metric / table reading order is uninterrupted.
+
+    Returns (wrapper, app) or (None, None)."""
     try:
         fplt.refresh()
     except Exception as e:
@@ -676,27 +753,33 @@ def _wrap_streaming_window(
         bl.setSpacing(0)
         bl.addWidget(bottom_split)
 
-        # Group the controls bar + bottom into one lower pane so the splitter
-        # has a SINGLE handle (chart vs lower). The controls bar keeps a fixed
-        # height; dragging the handle resizes only the chart and the
-        # table+curve, never the Pause/Speed/Drag row in between.
+        # Lower pane = bottom (table | curve) on top, controls bar as footer.
+        # Controls keep a fixed height; bottom row absorbs main-handle drag.
+        # Metric panel is its OWN row in the main splitter (between chart and
+        # lower), mirroring the static viewer.
         controls.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Preferred,
             QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        metric_panel.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred,
+            QtWidgets.QSizePolicy.Policy.Maximum,
         )
         lower = QtWidgets.QWidget()
         lower_l = QtWidgets.QVBoxLayout(lower)
         lower_l.setContentsMargins(0, 0, 0, 0)
         lower_l.setSpacing(0)
-        lower_l.addWidget(controls, stretch=0)
         lower_l.addWidget(bottom, stretch=1)
+        lower_l.addWidget(controls, stretch=0)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical, wrapper)
         splitter.addWidget(chart_widget)
+        splitter.addWidget(metric_panel)
         splitter.addWidget(lower)
         splitter.setStretchFactor(0, 6)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([500, 260])
+        splitter.setStretchFactor(1, 0)   # metric strip keeps content height
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([440, 80, 240])
         splitter.setHandleWidth(4)
 
         wrapper.setCentralWidget(splitter)

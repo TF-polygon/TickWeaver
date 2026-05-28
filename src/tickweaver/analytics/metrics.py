@@ -21,11 +21,18 @@ def _periods_per_year_from_index(idx: pd.DatetimeIndex) -> float:
     return 365.25 * 24 * 3600 / median_sec
 
 
-def compute_metrics(
+def _compute_from_equity_and_trades(
     equity_curve: pd.DataFrame,
     trades: list[Trade],
     initial_cash: float,
 ) -> dict[str, Any]:
+    """Stateless core: equity curve + closed trades + initial cash → metrics dict.
+
+    Pure function; safe to call repeatedly with partial slices. Both
+    :func:`compute_metrics` (batch) and :func:`compute_metrics_incremental`
+    (streaming) delegate here, so a progressive N-call final-step result is
+    floating-point exact with the batch 1-call result.
+    """
     if equity_curve.empty:
         return {
             "final_equity": initial_cash,
@@ -61,10 +68,15 @@ def compute_metrics(
     drawdown = (eq - running_peak) / running_peak
     max_dd = float(drawdown.min()) if not drawdown.empty else 0.0
 
-    # CAGR
+    # CAGR — guard against degenerate spans (1-row equity / zero-duration index).
+    # Annualization is undefined for ≤1 sample, and `years≈0` overflows `**1/years`.
+    # Fall back to `total_return` (the only meaningful realized return on a point).
     n_seconds = (equity_curve.index[-1] - equity_curve.index[0]).total_seconds()
-    years = max(n_seconds / (365.25 * 24 * 3600), 1e-9)
-    cagr = (final_equity / initial_cash) ** (1.0 / years) - 1.0 if final_equity > 0 else -1.0
+    if len(equity_curve) < 2 or n_seconds <= 0:
+        cagr = total_return
+    else:
+        years = n_seconds / (365.25 * 24 * 3600)
+        cagr = (final_equity / initial_cash) ** (1.0 / years) - 1.0 if final_equity > 0 else -1.0
 
     calmar = (cagr / abs(max_dd)) if max_dd < 0 else 0.0
 
@@ -94,3 +106,36 @@ def compute_metrics(
         "win_rate": win_rate,
         "profit_factor": profit_factor,
     }
+
+
+def compute_metrics(
+    equity_curve: pd.DataFrame,
+    trades: list[Trade],
+    initial_cash: float,
+) -> dict[str, Any]:
+    """Batch metrics (back-compat). Thin wrapper over the stateless core."""
+    return _compute_from_equity_and_trades(equity_curve, trades, initial_cash)
+
+
+def compute_metrics_incremental(
+    closed_trades: list[Trade],
+    equity_snapshot: pd.DataFrame,
+    initial_cash: float,
+) -> dict[str, Any]:
+    """Stateless progressive caller for streaming / viz panels.
+
+    Same computation as :func:`compute_metrics` but with the streaming-friendly
+    argument order ``(closed_trades, equity_snapshot, initial_cash)``. Safe to
+    call repeatedly with partial slices; the final-step result (full equity
+    curve + all closed trades) is floating-point exact with the batch
+    :func:`compute_metrics` call (both delegate to the same stateless core).
+
+    Args:
+        closed_trades: Round-trip trades closed so far. Matches
+            :func:`tickweaver.analytics.trades.extract_trades` output
+            semantics — open positions are excluded by the caller.
+        equity_snapshot: Equity curve up to the current tick. May be a
+            partial slice; no state is retained between calls.
+        initial_cash: Initial cash for return / CAGR calculations.
+    """
+    return _compute_from_equity_and_trades(equity_snapshot, closed_trades, initial_cash)

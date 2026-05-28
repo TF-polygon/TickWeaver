@@ -117,7 +117,11 @@ def main(
             )
             raise typer.Exit(code=2)
         hook_cls = StreamingChartHook if stream else LiveChartHook
-        chart_hook = hook_cls(symbol="", timeframe="", block=True)
+        # auto_show=False: hook 의 on_deinit 가 finplot 윈도우를 자동 오픈하지
+        # 않도록. 윈도우 오픈은 run_backtest() 반환 후 result.equity_curve 를
+        # attach 한 다음 명시적으로 chart_hook.show() 로 처리 — viz 의 KPI 패널
+        # 이 broker.equity 시계열(=HTML batch 와 동일 source) 을 사용하게 됨.
+        chart_hook = hook_cls(symbol="", timeframe="", block=True, auto_show=False)
 
     result = run_backtest(
         strategy_path=resolved_strategy,
@@ -132,6 +136,13 @@ def main(
         f"(initial = {result.initial_cash:.2f}, "
         f"return = {(result.final_equity / result.initial_cash - 1.0) * 100:+.2f}%)"
     )
+
+    # Viz 윈도우 오픈 — broker.equity 시계열을 hook 에 주입해서 viz 패널의
+    # equity-derived metric 이 HTML batch 와 동일 source 를 보도록. show() 는
+    # 사용자가 윈도우를 닫을 때까지 blocking.
+    if chart_hook is not None:
+        chart_hook.attach_equity_curve(result.equity_curve)
+        chart_hook.show()
 
 
 if __name__ == "__main__":

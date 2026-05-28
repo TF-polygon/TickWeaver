@@ -828,6 +828,11 @@ def _attach_description_pane(fplt, html: str, table_widget=None):
     Issue 4 Step 4: `table_widget` (PositionTableWidget) 이 주어지면 하단의
     description 영역을 horizontal splitter (desc | table) 로 wrap. None 이면
     기존처럼 desc 만 표시.
+
+    eval_metrics #12: MetricPanel 은 이 함수가 아니라 show_replay 가 별도
+    row 로 vertical splitter 에 직접 insert 한다 (chart 와 description 사이).
+    panel 의 self-checkable title 이 토글 역할을 하므로 description 헤더에
+    체크박스를 둘 필요 없음.
     """
     try:
         from pyqtgraph.Qt import QtCore, QtWidgets
@@ -870,15 +875,14 @@ def _attach_description_pane(fplt, html: str, table_widget=None):
         )
         desc.setMinimumHeight(100)
 
-        # Issue 4 Step 4: 하단을 horizontal splitter (desc | table) 로 wrap.
-        # table_widget=None 이면 desc 만 추가 (기존 동작).
+        # Issue 4 Step 4: table_widget 이 있으면 하단을 horizontal splitter
+        # (desc | table) 로 wrap. 없으면 plain desc.
         if table_widget is not None:
             bottom_pane = QtWidgets.QSplitter(
                 QtCore.Qt.Orientation.Horizontal, wrapper
             )
             bottom_pane.addWidget(desc)
             bottom_pane.addWidget(table_widget)
-            # desc 1 : table 2 — 표가 더 넓게.
             bottom_pane.setStretchFactor(0, 1)
             bottom_pane.setStretchFactor(1, 2)
             bottom_pane.setHandleWidth(4)
@@ -889,6 +893,10 @@ def _attach_description_pane(fplt, html: str, table_widget=None):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([520, 220 if table_widget is not None else 140])
         splitter.setHandleWidth(4)
+        # show_replay attaches the MetricPanel as its own row between chart
+        # and description by inserting at index 1 after this returns; remember
+        # the splitter via an attribute so the caller can find it cleanly.
+        wrapper._main_splitter = splitter  # type: ignore[attr-defined]
 
         wrapper.setCentralWidget(splitter)
         wrapper.resize(980, 644)
@@ -953,8 +961,17 @@ def show_replay(
     symbol: str = "",
     timeframe: str = "",
     block: bool = True,
+    equity_curve: "pd.DataFrame | None" = None,
 ) -> None:
-    """Open a finplot window with the full backtest result drawn at once."""
+    """Open a finplot window with the full backtest result drawn at once.
+
+    eval_metrics D7: if ``equity_curve`` (engine's per-bar equity DataFrame) is
+    provided, the KPI metric panel is populated via
+    ``analytics.metrics.compute_metrics`` (char-for-char SSOT with the HTML
+    report). If ``None``, the panel falls back to trade-only metrics — the
+    four equity-derived cards (sharpe / sortino / max_drawdown / calmar)
+    render as "—".
+    """
     try:
         import finplot as fplt
     except ImportError as e:
@@ -1280,10 +1297,10 @@ def show_replay(
     # 를 build_position_history 에 전달. PyQt 미설치 등으로 실패하면 None
     # 으로 두고 _attach_description_pane 이 desc-only 모드로 동작.
     table_widget = None
+    _leverage = float(getattr(recorder, "leverage", 1.0) or 1.0)
     try:
         from tickweaver.analytics.positions import build_position_history
         from tickweaver.viz.position_table import PositionTableWidget
-        _leverage = float(getattr(recorder, "leverage", 1.0) or 1.0)
         _history_rows = build_position_history(
             recorder.fills,
             leverage=_leverage,
@@ -1296,6 +1313,24 @@ def show_replay(
         print(f"[viz] position table skipped: {type(e).__name__}: {e}")
         table_widget = None
 
+    # eval_metrics P3 + D7: KPI 패널 생성 + final 메트릭 1 회 갱신.
+    # equity_curve 가 주어지면 그대로 compute_metrics 에 전달 → report.html
+    # 과 동일한 값 (SSOT). None 이면 trade_only_metrics 로 graceful 표시.
+    metric_panel = None
+    try:
+        from tickweaver.analytics.metrics import compute_metrics
+        from tickweaver.viz.metric_panel import MetricPanel, trade_only_metrics
+        metric_panel = MetricPanel()
+        trades = _trades(recorder)
+        if equity_curve is not None and len(equity_curve) >= 2:
+            metrics = compute_metrics(equity_curve, trades, initial_cash)
+        else:
+            metrics = trade_only_metrics(trades, initial_cash, final_equity)
+        metric_panel.update_from_metrics(metrics)
+    except Exception as e:
+        print(f"[viz] metric panel skipped: {type(e).__name__}: {e}")
+        metric_panel = None
+
     # finplot must finish its internal bookkeeping (axs / overlay_axs /
     # autoscale) BEFORE we reparent the chart widget into our wrapper.
     try:
@@ -1303,7 +1338,25 @@ def show_replay(
     except Exception as e:
         print(f"[viz] fplt.refresh() warning: {type(e).__name__}: {e}")
 
-    wrapper, app = _attach_description_pane(fplt, html, table_widget=table_widget)
+    wrapper, app = _attach_description_pane(
+        fplt, html, table_widget=table_widget,
+    )
+
+    # eval_metrics #12: insert MetricPanel as its own row between chart and
+    # description so the cards get the full window width (the prior 3-column
+    # horizontal layout was too cramped). The panel is self-checkable, so
+    # collapsing the strip is a click on its title bar — no external toggle.
+    if wrapper is not None and metric_panel is not None:
+        main_splitter = getattr(wrapper, "_main_splitter", None)
+        if main_splitter is not None:
+            main_splitter.insertWidget(1, metric_panel)
+            # Reset stretch + sizes so the layout is [chart 5 / metric 0 / desc 1].
+            main_splitter.setStretchFactor(0, 5)
+            main_splitter.setStretchFactor(1, 0)
+            main_splitter.setStretchFactor(2, 1)
+            # Metric strip ~80 px (2 lines + group title); chart and lower
+            # row split the remainder.
+            main_splitter.setSizes([460, 80, 220])
 
     if wrapper is not None and app is not None:
         # Custom show path: we own the QMainWindow lifetime.
