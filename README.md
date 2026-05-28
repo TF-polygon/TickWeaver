@@ -15,7 +15,7 @@ data is expensive or has short retention. TickWeaver bridges the gap by
 **synthesizing a plausible intra-bar tick path from OHLC alone**, with strict
 mathematical guarantees so it never contradicts the bar.
 
-![Synthesized ticks catch intra-bar SL/TP fills that close-only backtests miss](intra_bar_fill_comparison.png)
+![Synthesized ticks catch intra-bar SL/TP fills that close-only backtests miss](docs/img/intra_bar_fill_comparison.png)
 
 The figure shows the same three bars handled two ways. A bar whose wick
 dips below an SL line while the close stays above never triggers the SL
@@ -66,9 +66,8 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## What you get
 
-- **Seven built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`,
-  `SuperTrend`, `MACD`, `BollingerBands`. Common contract:
-  `update / value / is_warm / reset`.
+- **Six built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`, `MACD`,
+  `BollingerBands`. Common contract: `update / value / is_warm / reset`.
   Count-based (gap-safe), deterministic.
 - **All four major order types**: `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`.
   LIMIT fills as maker (no slippage). STOP triggers as taker. Lookahead
@@ -222,9 +221,6 @@ deterministic: `--stream` does not change `final_equity`.
 python scripts/run_backtest.py --strategy my_strategy --config futures.yaml --viz --stream
 ```
 
-<!-- IMAGE PLACEHOLDER (animated demo) — drop the gif at docs/img/streaming_replay.gif -->
-![Streaming replay — candles grow tick by tick with live fills, indicators, and a balance curve](docs/img/streaming_replay.gif)
-
 **Playback controls** (bottom bar):
 
 | Control | Effect |
@@ -318,7 +314,7 @@ CCXT OHLCV download
 
 ## Current status
 
-- **M0~M4 and M6 complete.** 391 tests passing (including 2380+ hypothesis
+- **M0~M4 and M6 complete.** 92 tests passing (including 2380+ hypothesis
   property cases for the C1~C7 contract).
 - **M5 (live trading) archived** to `_archive_live/` per decision D11.
   Restorable later.
@@ -355,5 +351,5 @@ first. Adding a new tick generator, indicator, or fee/slippage model is
 covered there as worked examples.
 
 When opening a PR:
-- run `pytest --hypothesis-show-statistics` and ensure all 391+ tests pass
+- run `pytest --hypothesis-show-statistics` and ensure all 92+ tests pass
 - keep new modules import-clean (no circular imports across layers)
