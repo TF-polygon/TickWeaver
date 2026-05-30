@@ -336,7 +336,7 @@ def on_bar(bar):
 
 `--dump-ticks N` 옵션으로 N 개 봉의 합성 tick 을 PNG / parquet 으로 저장:
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha --dump-ticks 10
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --dump-ticks 10
 # -> reports/<run>/sample_tick_paths.png
 # -> reports/<run>/sample_ticks.parquet
 ```

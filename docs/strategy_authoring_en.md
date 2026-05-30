@@ -13,13 +13,12 @@ strategies/
 ├── _starter.py              # boilerplate (committed; copy as your starting point)
 ├── _reference.md            # API dictionary (Korean / _en for English)
 ├── README.md
-├── buy_and_hold.py          # simplest demo
-├── ema_cross.py             # EMA cross (Pattern 1)
-├── rsi_mean_reversion.py    # RSI mean reversion (Pattern 1)
-├── ema_market_sl_tp.py      # EMA entry + intra-bar market SL/TP (Pattern 2)
-├── limit_demo.py            # LIMIT / STOP demo
+├── supertrend.py            # bundled example strategy (Pattern 2)
 └── my_alpha.py              # user strategy (gitignore)
 ```
+
+> More example strategies (`buy_and_hold`, `ema_cross`, `rsi_mean_reversion`,
+> `ema_market_sl_tp`, `limit_demo`) are archived under `test_strategy/`.
 
 Conventions:
 
@@ -178,7 +177,7 @@ def on_bar(bar):
         api.close_position()
 ```
 
-Full code: `strategies/rsi_mean_reversion.py`.
+Full code: `test_strategy/rsi_mean_reversion.py`.
 
 ---
 
@@ -201,7 +200,7 @@ def on_fill(fill):
         api.limit_sell(pos.qty, price=pos.entry_price * 1.015)      # +1.5% target
 ```
 
-Full code: `strategies/limit_demo.py`.
+Full code: `test_strategy/limit_demo.py`.
 
 **Note**: when one of SL / TP fills, the other is NOT automatically
 cancelled. Either detect the fill in `on_fill` and `api.cancel(order_id)`
@@ -235,6 +234,10 @@ def on_tick(tick):
 
 Using `on_tick` means the result depends on the synthesized tick path
 (differences surface when running uniform vs bridge via `compare_runs.py`).
+
+The bundled `strategies/supertrend.py` is the canonical, fully working
+reference for this Pattern 2 (on_bar entry + on_tick SL/TP exit) -- read it
+to see a complete, runnable strategy of this shape.
 
 ---
 
@@ -328,7 +331,7 @@ result as baseline; later code changes can be measured precisely against it.
 
 ```powershell
 # Dump 5 bars worth of tick streams to PNG / parquet
-python scripts/run_backtest.py --strategy my_alpha --dump-ticks 5
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --dump-ticks 5
 ```
 
 Check `reports/<run>/sample_tick_paths.png` for the synthesized tick path.
@@ -341,24 +344,25 @@ To protect a strategy as a regression test, use a fixed yaml so seed +
 data are locked, and baseline the first result:
 
 ```python
-# tests/strategies/test_my_alpha_regression.py
+# tests/strategies/test_supertrend_regression.py
 import pytest
 from tickweaver.engine.runner import run_backtest
 
-def test_my_alpha_regression(tmp_path):
+def test_supertrend_regression(tmp_path):
     res = run_backtest(
-        strategy_path="strategies/my_alpha.py",
-        config_path="configs/default.yaml",
+        strategy_path="strategies/supertrend.py",
+        config_path="configs/futures.yaml",
         out_dir=tmp_path / "out",
         show_progress=False,
     )
     # baseline measured once and locked
-    assert res.final_equity == pytest.approx(10412.78, rel=0, abs=1e-9)
+    assert res.final_equity == pytest.approx(10556.16, rel=0, abs=1e-2)
     assert len(res.fills) > 0
 ```
 
-If `tick_synthesis.seed` in the yaml is fixed, the result is bit-exact
-reproducible -- this is enough to guard against accidental regressions.
+If `tick_synthesis.seed` in `configs/futures.yaml` is fixed, the result is
+bit-exact reproducible -- this is enough to guard against accidental
+regressions.
 
 ---
 

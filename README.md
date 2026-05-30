@@ -53,12 +53,14 @@ pip install -e .
 python scripts/download_data.py --exchange binance --symbol "BTC/USDT:USDT" \
     --timeframe 1h --since 2024-01-01 --until 2024-07-01
 
-# 3. Run a backtest. --strategy auto-resolves to strategies/<name>.py
-python scripts/run_backtest.py --strategy my_strategy
+# 3. Run the bundled example strategy. `supertrend` ships in strategies/;
+#    --strategy auto-resolves to strategies/<name>.py. It takes both long
+#    and short trades, so it needs a futures config (configs/futures.yaml).
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 
 # 4. (optional) Add --viz to open an interactive chart after the run
 pip install -r requirements-viz.txt
-python scripts/run_backtest.py --strategy my_strategy --viz
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --viz
 ```
 
 Open `reports/<strategy>_<UTC ts>/report.html` in a browser, or pass `--viz`
@@ -95,45 +97,54 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## Strategy file example
 
+The bundled `supertrend` strategy is the canonical example (full code in
+[`strategies/supertrend.py`](strategies/supertrend.py)). It's a **Pattern 2**
+strategy — entry decided on bar close, exit managed on every synthesized tick —
+which is exactly where the tick path earns its keep. Trading parameters live as
+module constants at the top of the file:
+
 ```python
-# strategies/my_strategy.py  — an illustrative example (RSI mean reversion)
-from tickweaver.strategy.indicators import RSI
+# strategies/supertrend.py  (excerpt — see the file for the full pivot / SL / TP logic)
+from tickweaver.strategy.indicators import SuperTrend
 
 # Trading parameters live as module constants - edit here to tune.
-RSI_PERIOD = 14
-OVERSOLD = 30.0
-OVERBOUGHT = 70.0
-SIZE_PCT = 0.2
-
-rsi = None
-
-def on_init():
-    global rsi
-    rsi = RSI(period=RSI_PERIOD)
+ST_PERIOD = 10          # SuperTrend ATR length
+ST_MULT = 3.0           # SuperTrend ATR multiplier
+SWING_LOOKBACK = 2      # bars each side to confirm a swing low/high (the stop)
+TP_R = 1.5              # take-profit = TP_R * risk (entry-to-SL distance)
+SIZE_PCT = 0.2          # 20% of available cash per entry
 
 def on_bar(bar):
-    rsi.update(bar.close)
-    if not rsi.is_warm:
+    st.update_bar(bar)              # SuperTrend + swing-pivot tracking
+    if not st.is_warm or not api.is_flat():
         return
-    if rsi.value < OVERSOLD and api.is_flat():
+    # SuperTrend flips bearish->bullish => go Long  (SL = last swing low).
+    # flips bullish->bearish => go Short (futures only, SL = last swing high).
+    if buy_flip:
         api.market_buy(api.size_from_cash_pct(SIZE_PCT, bar.close))
-    elif rsi.value > OVERBOUGHT and not api.is_flat():
+
+def on_tick(tick):
+    # SL/TP enforced on every synthesized tick — the exit fires inside the
+    # wick at the price the wick actually reached, not at bar close.
+    if not api.is_flat() and (tick.price <= sl_price or tick.price >= tp_price):
         api.close_position()
 ```
 
-That's it. Save it under `strategies/` and run with (use your own file name):
+SuperTrend takes both long and short trades, so it needs a **futures** config
+(`configs/futures.yaml` — the default `configs/default.yaml` is spot and would
+reject the shorts). Run it with:
 
 ```bash
-python scripts/run_backtest.py --strategy my_strategy
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 ```
 
 `--strategy` accepts any of these — all resolve to the same file:
 
 ```bash
---strategy my_strategy
---strategy my_strategy.py
---strategy strategies/my_strategy.py
---strategy /abs/path/to/my_strategy.py
+--strategy supertrend
+--strategy supertrend.py
+--strategy strategies/supertrend.py
+--strategy /abs/path/to/supertrend.py
 ```
 
 See [`strategies/_reference.md`](strategies/_reference.md) for the full
@@ -162,8 +173,10 @@ synthesized tick**, so exits can fire inside a bar's wick at the actual
 price the wick reached — not at bar close. This is where the synthesized
 tick path earns its keep.
 
-For example, an EMA(12/26) golden-cross entry with a per-tick SL / TP exit —
-the exit fires inside the wick at the price the wick actually reached.
+The bundled `supertrend` strategy is exactly this: a SuperTrend-flip entry
+decided on bar close, with a swing-based stop-loss and 1.5R take-profit
+evaluated on every synthesized tick — the exit fires inside the wick at the
+price the wick actually reached.
 
 The diagnostic script below shows the difference empirically: Pattern-1
 records 0% inside-wick fills, while Pattern-2 records a meaningful share
@@ -180,7 +193,7 @@ decisions, so `--viz` on or off produces bit-exact same `final_equity`.
 pip install -r requirements-viz.txt
 
 # 2. Add --viz to any backtest
-python scripts/run_backtest.py --strategy my_strategy --viz
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --viz
 ```
 
 The window shows the candles with fill markers, entry→exit pair lines, any
@@ -218,7 +231,7 @@ trade pair lines, indicator sub-panels, the position table, and a realized
 deterministic: `--stream` does not change `final_equity`.
 
 ```bash
-python scripts/run_backtest.py --strategy my_strategy --config futures.yaml --viz --stream
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --viz --stream
 ```
 
 **Playback controls** (bottom bar):
@@ -252,7 +265,7 @@ A common question: "I'm using synthesized ticks, but are my fills really
 landing inside bars, or are they all at bar boundaries?" Run the diagnostic:
 
 ```bash
-python scripts/diagnose_fills.py my_strategy
+python scripts/diagnose_fills.py supertrend
 ```
 
 For each fill the script checks whether:

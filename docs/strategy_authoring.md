@@ -14,13 +14,13 @@ strategies/
 ├── _starter.py              # 보일러플레이트 (커밋됨, 복사 시작점)
 ├── _reference.md            # API 사전형 레퍼런스
 ├── README.md
-├── buy_and_hold.py          # 가장 단순한 데모
-├── ema_cross.py             # EMA 크로스 (Pattern 1)
-├── rsi_mean_reversion.py    # RSI 평균회귀 (Pattern 1)
-├── ema_market_sl_tp.py      # EMA 진입 + 봉 내부 SL/TP (Pattern 2)
-├── limit_demo.py            # LIMIT/STOP 데모
+├── supertrend.py            # 번들 예시 전략 (Pattern 2)
 └── my_alpha.py              # 사용자 전략 (gitignore 됨)
 ```
+
+> 추가 예시 전략 (`buy_and_hold`, `ema_cross`, `rsi_mean_reversion`,
+> `ema_market_sl_tp`, `limit_demo`) 은 `test_strategy/` 아래에 아카이브되어
+> 있습니다.
 
 핵심 규칙:
 - 한 전략 = 하나의 `.py` 파일. 매매 파라미터는 **파일 상단의 모듈 상수**로 둠.
@@ -199,7 +199,7 @@ def on_bar(bar):
         api.close_position()
 ```
 
-전체 코드: `strategies/rsi_mean_reversion.py`.
+전체 코드: `test_strategy/rsi_mean_reversion.py`.
 
 ---
 
@@ -222,7 +222,7 @@ def on_fill(fill):
         api.limit_sell(pos.qty, price=pos.entry_price * 1.015)      # 익절 +1.5%
 ```
 
-전체 코드: `strategies/limit_demo.py`.
+전체 코드: `test_strategy/limit_demo.py`.
 
 **주의**: 손절과 익절 둘 중 하나가 체결되면 다른 하나는 자동으로 취소되지 **않습니다**. 한쪽 체결을 `on_fill` 에서 감지해 다른 주문을 `api.cancel(order_id)` 로 명시 취소하거나, position size 가 0 이 됐을 때 broker 가 알아서 처리하도록 하세요.
 
@@ -252,6 +252,8 @@ def on_tick(tick):
 ```
 
 `on_tick` 을 사용하면 봉 내부 합성 tick 경로에 따라 결과가 달라집니다 (compare_runs 비교 시 차이 발현).
+
+번들 예시 `strategies/supertrend.py` 가 바로 이 Pattern 2 (on_bar 진입 + on_tick SL/TP 청산) 의 완성형 레퍼런스입니다 — 실제로 굴러가는 전체 전략을 보려면 이 파일을 참고하세요.
 
 ### 5.X 지표 시각화 (`--viz`)
 
@@ -351,7 +353,7 @@ print(df["pnl"].describe())
 
 ```powershell
 # 5개 봉의 tick stream 을 PNG/parquet 으로 dump
-python scripts/run_backtest.py --strategy my_alpha --dump-ticks 5
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --dump-ticks 5
 ```
 
 `reports/<run>/sample_tick_paths.png` 로 합성 tick 경로 확인 가능.
@@ -365,23 +367,23 @@ python scripts/run_backtest.py --strategy my_alpha --dump-ticks 5
 baseline 으로 잠가두는 형태를 권장:
 
 ```python
-# tests/strategies/test_my_alpha_regression.py
+# tests/strategies/test_supertrend_regression.py
 import pytest
 from tickweaver.engine.runner import run_backtest
 
-def test_my_alpha_regression(tmp_path):
+def test_supertrend_regression(tmp_path):
     res = run_backtest(
-        strategy_path="strategies/my_alpha.py",
-        config_path="configs/default.yaml",
+        strategy_path="strategies/supertrend.py",
+        config_path="configs/futures.yaml",
         out_dir=tmp_path / "out",
         show_progress=False,
     )
     # baseline 은 처음 한 번 측정해서 잠금
-    assert res.final_equity == pytest.approx(10412.78, rel=0, abs=1e-9)
+    assert res.final_equity == pytest.approx(10556.16, rel=0, abs=1e-2)
     assert len(res.fills) > 0
 ```
 
-`configs/default.yaml` 안의 `tick_synthesis.seed` 가 고정이면 결과는
+`configs/futures.yaml` 안의 `tick_synthesis.seed` 가 고정이면 결과는
 bit-exact 재현되므로 회귀 보호에 충분.
 
 ---

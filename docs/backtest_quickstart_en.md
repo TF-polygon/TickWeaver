@@ -1,7 +1,7 @@
 # Backtest Quickstart -- first backtest in 30 minutes
 
-> **Goal**: new users run an RSI strategy on BTC/USDT 1h data and view
-> `report.html` within 30 minutes.
+> **Goal**: a first-time user runs the bundled example strategy `supertrend`
+> on BTC/USDT 1h data and gets all the way to `report.html` within 30 minutes.
 >
 > This guide targets **first-time users**. For deeper material see
 > `docs/USER_GUIDE_en.md`; for strategy patterns
@@ -47,14 +47,18 @@ python -c "import tickweaver; print(tickweaver.__version__)"
 
 ## 2. Data download (3 min)
 
-In most cases the backtest runner will auto-download for you. To pre-fetch
-manually use the CCXT public endpoint (D15 -- **no API key needed**):
+Download Binance BTC/USDT perpetual-futures 1h bars via the CCXT public
+endpoint (D15 -- **no API key needed**):
 
 ```powershell
 python scripts/download_data.py --exchange binance --symbol "BTC/USDT:USDT" --timeframe 1h --since 2024-01-01 --until 2024-07-01
 ```
 
 -> `data/processed/binance/BTC-USDT-USDT/swap/1h.parquet` (~4380 bars)
+
+> You can actually skip this step -- `run_backtest.py` reads the data range
+> from the config and auto-downloads anything missing from the cache. Use the
+> command above only when you want to pre-fetch.
 
 **Inspect the data (optional)**:
 
@@ -68,51 +72,75 @@ proceeds (D13 skip-only policy); just know that they exist.
 
 ---
 
-## 3. Prepare a strategy (2 min)
+## 3. Prepare a strategy (1 min)
 
-Copy `_starter.py`:
-
-```powershell
-copy strategies\_starter.py  strategies\my_alpha.py
-```
-
-Trading parameters (e.g. `RSI_PERIOD = 14`) live as module constants at the
-top of the `.py` -- no json side-files. Environment settings (capital /
-symbol / period / cost / ...) live in `configs/<env>.yaml`.
-
-Or use the built-in RSI mean-reversion strategy as-is:
+The bundled example strategy `strategies/supertrend.py` already ships with the
+repo -- no need to copy anything. When SuperTrend flips bearish->bullish it goes
+Long, when it flips bullish->bearish it goes Short, and it checks a swing
+low/high stop-loss + 1.5R take-profit on **every synthesized intra-bar tick**.
+This is a textbook Pattern 2 strategy (entry on `on_bar` + exit on `on_tick`).
 
 ```powershell
-# strategies/rsi_mean_reversion.py already exists
-type strategies\rsi_mean_reversion.py
+# Take a look
+type strategies\supertrend.py
 ```
+
+Trading parameters live as module constants at the top of the `.py` -- no json
+side-files:
+
+```python
+ST_PERIOD = 10          # SuperTrend ATR length
+ST_MULT = 3.0           # SuperTrend ATR multiplier
+SWING_LOOKBACK = 2      # bars each side to confirm a swing low/high (the stop)
+TP_R = 1.5              # take-profit = TP_R * risk (entry-to-SL distance)
+SIZE_PCT = 0.2          # 20% of available cash per entry
+```
+
+> To start your own strategy, copy `strategies/_starter.py`:
+> `copy strategies\_starter.py strategies\my_alpha.py`. Environment settings
+> (capital / symbol / period / cost / ...) live in `configs/<env>.yaml`.
 
 ---
 
 ## 4. Run a backtest (1 min)
 
-D17 -- only `--strategy` is mandatory:
+SuperTrend opens short positions, so it needs a **futures config
+(`configs/futures.yaml`)**. The default `configs/default.yaml` is spot and
+rejects the short (`SpotShortNotAllowedError`):
 
 ```powershell
-python scripts/run_backtest.py --strategy rsi_mean_reversion
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 ```
 
 A tqdm progress bar updates per bar; the final output directory is printed
 at the end:
 
 ```
-100% ██████████| 4380/4380 [00:14, 305bar/s, equity=10412]
-final_equity = 10412.78 (initial = 10000.00, return = +4.13%)
+100% ██████████| 4368/4368 [00:04, 950bar/s, equity=10556]
+final_equity = 10556.16 (initial = 10000.00, return = +5.56%)
 ```
 
-**`--strategy` auto-resolution** -- all four forms work:
+**`--config` auto-resolution** -- a filename with an extension (e.g.
+`futures.yaml`) is looked up automatically under `configs/`. Include a path
+separator (e.g. `configs/futures.yaml`) and it is used as-is.
+
+**`--strategy` auto-resolution** -- all four forms work identically:
 
 ```powershell
-python scripts/run_backtest.py --strategy rsi_mean_reversion
-python scripts/run_backtest.py --strategy rsi_mean_reversion.py
-python scripts/run_backtest.py --strategy strategies/rsi_mean_reversion.py
-python scripts/run_backtest.py --strategy /abs/path/to/x.py
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
+python scripts/run_backtest.py --strategy supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy strategies/supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy /abs/path/to/supertrend.py --config futures.yaml
 ```
+
+> **(optional) View it as a chart** -- append `--viz` and a finplot window
+> opens after the backtest. `--viz --stream` replays it as a streaming
+> animation where each candle grows tick by tick. Install the viz extras
+> first with `pip install -r requirements-viz.txt`.
+> ```powershell
+> python scripts/run_backtest.py --strategy supertrend --config futures.yaml --viz
+> python scripts/run_backtest.py --strategy supertrend --config futures.yaml --viz --stream
+> ```
 
 ---
 
@@ -132,39 +160,56 @@ Generated artifacts:
 | `equity_curve.png` | Equity curve + drawdown plot |
 | `equity.parquet` | Per-bar equity time series (pandas-friendly) |
 | `trades.parquet` | Round-trip trades (entry / exit / PnL) |
-| `fills.csv` | Raw fills with nanosecond timestamps |
 | `tick_summary.json` | "Tick Synthesis (proof)" -- generator / seed / n_ticks |
 | `config_snapshot.json` | Full config snapshot for reproducibility |
 
+`metrics.json` example (from the run above):
+
+```json
+{
+  "final_equity": 10556.16,
+  "total_return": 0.0556,
+  "cagr": 0.1148,
+  "sharpe": 1.42,
+  "sortino": 1.63,
+  "max_drawdown": -0.0478,
+  "calmar": 2.40,
+  "n_trades": 41,
+  "win_rate": 0.439,
+  "profit_factor": 1.41
+}
+```
+
 ```powershell
 # Open in a browser on Windows
-start reports\rsi_mean_reversion_*\report.html
+start reports\supertrend_*\report.html
 ```
 
 ---
 
 ## 6. Tune parameters (5 min)
 
-Edit the module constants at the top of `strategies/rsi_mean_reversion.py`:
+Edit the module constants at the top of `strategies/supertrend.py`:
 
 ```python
-# strategies/rsi_mean_reversion.py
-RSI_PERIOD = 21
-OVERSOLD = 25.0
-OVERBOUGHT = 75.0
-SIZE_PCT = 0.3
+# strategies/supertrend.py
+ST_PERIOD = 14         # make SuperTrend slower (fewer signals, less noise)
+ST_MULT = 2.5          # tighter bands (flips more often)
+SWING_LOOKBACK = 3     # stop placed further away (slower confirmation)
+TP_R = 2.0             # take-profit at 2R (lower win rate, higher payoff)
+SIZE_PCT = 0.3         # 30% per entry
 ```
 
 Re-run:
 
 ```powershell
-python scripts/run_backtest.py --strategy rsi_mean_reversion
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 ```
 
 Separate results with `--out-dir` for parameter comparison:
 
 ```powershell
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p21
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp2
 ```
 
 ---
@@ -175,20 +220,26 @@ Compare both tick-synthesis algorithms on the same data and strategy
 (D16 -- comparison is `compare_runs.py` only):
 
 ```powershell
-python scripts/compare_runs.py backtest --strategy rsi_mean_reversion
+python scripts/compare_runs.py backtest --strategy supertrend --config futures.yaml
 ```
 
 ```
 metric              uniform        bridge
 ------------------  -------------  -------------
-  final_equity            10412.78        10412.78
-  sharpe                      0.92          0.92
+  final_equity            10556.1591      10255.8204
+  total_return                0.0556          0.0256
+  sharpe                      1.4162          0.6893
+  max_drawdown               -0.0478         -0.0588
+  n_trades                        41              41
   ...
 ```
 
-Strategies using only `on_bar` produce identical results across generators
-(expected). Differences only surface in strategies that use `on_tick`
-trailing logic.
+Strategies using only `on_bar` produce identical results across generators.
+But `supertrend` checks its stop-loss / take-profit in `on_tick` (on
+intra-bar synthesized ticks), making it a Pattern 2 strategy, so **the two
+results diverge** -- the synthesized tick path determines exactly when the
+exit fires. That divergence is itself the proof that the synthesized ticks
+are doing real work.
 
 ---
 
@@ -205,26 +256,36 @@ trailing logic.
 
 ## FAQ
 
+**Q. I get a `Cannot MARKET SELL in spot mode` error.**
+A. SuperTrend opens short positions, so it needs a futures config. If you
+omit `--config futures.yaml` it falls back to the default spot config
+(default.yaml) and the short entry is blocked. Run it with
+`--config futures.yaml`.
+
 **Q. download_data fails with NetworkError.**
-A. CCXT cannot reach the exchange API. (1) Check internet (2) some
+A. CCXT cannot reach the Binance API. (1) Check internet (2) some
 corporate / school networks block exchange APIs -- try a different network
 (3) sandbox environments may also block this -- run on a real machine.
 
-**Q. RSI triggers too rarely.**
-A. With 21 days of data, 1~2 signals is normal. Use 6 months to 1 year of
-data, or relax oversold / overbought thresholds to 35 / 65.
+**Q. I get too few / too many trades.**
+A. SuperTrend flip frequency is driven by `ST_PERIOD` and `ST_MULT`. A
+shorter period or lower multiplier flips more often, giving more trades;
+the opposite gives fewer. A few dozen over 6 months of data is normal (the
+example above is 41).
 
 **Q. All values are 0 or NaN.**
-A. No entry happens until the warm-up period ends (RSI period + 1 bars).
-With fewer than 14 bars RSI never warms up. Use at least 100 bars.
+A. No entry happens until the warm-up period ends (SuperTrend needs
+`ST_PERIOD` + 1 bars). With too little data warm-up never completes. Use at
+least 100 bars.
 
 **Q. The progress bar is too long.**
 A. Disable it with `--no-progress`.
 
 **Q. Results change every run.**
 A. They should not (P3 determinism). Same seed -> bit-exact same result.
-Check `tick_synthesis.seed` in `configs/default.yaml` is fixed.
+Check `tick_synthesis.seed` in `configs/futures.yaml` is fixed.
 
-**Q. report.html shows 0 trades but there are fills.**
-A. Only completed round-trips (entry -> exit) count as trades. If a
-position is open at the end, it is an unfinished trade.
+**Q. report.html shows fewer trades than fills.**
+A. Only completed round-trips (entry -> exit) count as trades. Each entry
+and exit is a separate fill, so fills outnumber trades; a position still
+open at the end is an unfinished trade.

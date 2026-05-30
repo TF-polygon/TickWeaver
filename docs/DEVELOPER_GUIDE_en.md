@@ -354,7 +354,7 @@ def on_bar(bar):
 `--dump-ticks N` saves N bars' worth of synthesized ticks to PNG / parquet:
 
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha --dump-ticks 10
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --dump-ticks 10
 # -> reports/<run>/sample_tick_paths.png
 # -> reports/<run>/sample_ticks.parquet
 ```

@@ -16,10 +16,15 @@ User strategy files (MT4 EA style, single `.py` per strategy).
 3. Pick or create a yaml config under `configs/` (the yaml defines the
    environment: exchange / symbol / timeframe / period / costs).
 
-4. Run:
+4. Run. The bundled `supertrend` strategy is the canonical working example.
+   It takes both long and short trades, so it needs a futures config
+   (`configs/futures.yaml`) — the default spot config rejects the shorts:
 
    ```bash
-   python scripts/run_backtest.py --strategy my_alpha
+   # canonical runnable example (bundled strategy)
+   python scripts/run_backtest.py --strategy supertrend --config futures.yaml
+
+   # your own strategy
    python scripts/run_backtest.py --strategy my_alpha --config btc_4h.yaml
    ```
 
@@ -27,7 +32,7 @@ User strategy files (MT4 EA style, single `.py` per strategy).
 
 | File | Role |
 |---|---|
-| `strategies/<name>.py` | Strategy logic + trading parameters (RSI_PERIOD, SL_PCT, etc.) as module constants |
+| `strategies/<name>.py` | Strategy logic + trading parameters (ST_PERIOD, ST_MULT, etc.) as module constants |
 | `configs/<env>.yaml` | Backtest environment: data source, costs, tick synthesis, reporting |
 
 There is no `<name>.json` side-file. Trading parameters belong inside the
@@ -38,11 +43,11 @@ There is no `<name>.json` side-file. Trading parameters belong inside the
 | File | Pattern |
 |---|---|
 | `_starter.py` | Boilerplate. Copy this to start a new strategy |
-| `buy_and_hold.py` | Smoke test (buys first bar, holds) |
-| `ema_cross.py` | Pattern 1 — on_bar only (EMA cross entry + cross exit) |
-| `rsi_mean_reversion.py` | Pattern 1 — on_bar only (RSI threshold) |
-| `ema_market_sl_tp.py` | Pattern 2 — on_bar entry + on_tick market SL/TP exit |
-| `limit_demo.py` | LIMIT / STOP order types demo |
+| `supertrend.py` | Pattern 2 — SuperTrend flip entry + swing-low/high SL and 1.5R TP evaluated on every synthesized tick |
+
+The other example strategies (`buy_and_hold`, `ema_cross`,
+`rsi_mean_reversion`, `ema_market_sl_tp`, `limit_demo`) have been archived
+under `test_strategy/` and no longer live in `strategies/`.
 
 ## API reference
 

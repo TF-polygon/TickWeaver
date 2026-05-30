@@ -150,17 +150,20 @@ API dictionary: [`strategies/_reference_en.md`](../strategies/_reference_en.md).
 
 ### 5.1 Shortest invocation (D17)
 
+Run the bundled `supertrend` example (it takes shorts, so it needs a futures
+config):
+
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 ```
 
 `--strategy` auto-resolves -- all four forms work:
 
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha
-python scripts/run_backtest.py --strategy my_alpha.py
-python scripts/run_backtest.py --strategy strategies/my_alpha.py
-python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
+python scripts/run_backtest.py --strategy supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy strategies/supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy /abs/path/to/supertrend.py --config futures.yaml
 ```
 
 ### 5.2 All options
@@ -209,14 +212,16 @@ Machine-readable format for automation / external analysis:
 
 ```json
 {
-  "final_equity": 10412.78,
-  "total_return": 0.0413,
-  "sharpe": 0.92,
-  "sortino": 1.05,
-  "max_drawdown": -0.052,
-  "n_trades": 18,
-  "win_rate": 0.61,
-  "profit_factor": 1.42
+  "final_equity": 10556.16,
+  "total_return": 0.0556,
+  "cagr": 0.1148,
+  "sharpe": 1.42,
+  "sortino": 1.63,
+  "max_drawdown": -0.0478,
+  "calmar": 2.40,
+  "n_trades": 41,
+  "win_rate": 0.439,
+  "profit_factor": 1.41
 }
 ```
 
@@ -226,9 +231,9 @@ Open with pandas for arbitrary analysis:
 
 ```python
 import pandas as pd
-eq = pd.read_parquet("reports/my_alpha_xxx/equity.parquet")
-trades = pd.read_parquet("reports/my_alpha_xxx/trades.parquet")
-fills = pd.read_csv("reports/my_alpha_xxx/fills.csv")
+eq = pd.read_parquet("reports/supertrend_xxx/equity.parquet")
+trades = pd.read_parquet("reports/supertrend_xxx/trades.parquet")
+fills = pd.read_csv("reports/supertrend_xxx/fills.csv")
 
 # Daily return distribution
 daily = eq.resample("1D").last().pct_change().dropna()
@@ -271,25 +276,25 @@ data source). Use for reproducibility.
 
 ### 7.1 Single-variable sweep
 
-Edit the module constants at the top of `strategies/<your>.py` (e.g.
-`RSI_PERIOD`) and separate results with `--out-dir`:
+Edit the module constants at the top of `strategies/supertrend.py` (e.g.
+`TP_R`) and separate results with `--out-dir`:
 
 ```powershell
-# RSI_PERIOD = 7 in rsi_mean_reversion.py
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p7
+# TP_R = 1.0 in supertrend.py
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp1.0
 
-# After changing to RSI_PERIOD = 14
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p14
+# After changing to TP_R = 1.5
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp1.5
 
-# RSI_PERIOD = 21
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p21
+# TP_R = 2.0
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp2.0
 ```
 
 ### 7.2 Metric comparison snippet
 
 ```python
 import json, pandas as pd
-runs = ["rsi_p7", "rsi_p14", "rsi_p21"]
+runs = ["st_tp1.0", "st_tp1.5", "st_tp2.0"]
 rows = []
 for r in runs:
     m = json.load(open(f"reports/{r}/metrics.json"))
@@ -316,16 +321,21 @@ Validation strategies:
 Compare the two synthesis algorithms on the same data and strategy:
 
 ```powershell
-python scripts/compare_runs.py backtest --strategy my_alpha
+python scripts/compare_runs.py backtest --strategy supertrend --config futures.yaml
 ```
 
 ```
 metric              uniform        bridge
-final_equity            10412.78        10421.05
-sharpe                      0.92            0.95
-max_drawdown               -0.052          -0.049
-n_trades                       18              18
+final_equity            10556.16        10255.82
+sharpe                      1.42            0.69
+max_drawdown               -0.0478         -0.0588
+n_trades                       41              41
 ```
+
+`supertrend` checks SL/TP on `on_tick` (intra-bar synthesized ticks), so it is
+a Pattern 2 strategy and **the two generators diverge** -- the synthesized tick
+path decides when the exit fires. An `on_bar`-only strategy gives identical
+results for both.
 
 Or visualize the tick path of a single bar:
 
@@ -350,10 +360,14 @@ directly into other tools.
 Guard the same-seed -> same-result invariant with a test:
 
 ```python
-def test_alpha_regression(tmp_path):
-    res = run_backtest(strategy_path="strategies/my_alpha.py", out_dir=tmp_path)
+def test_supertrend_regression(tmp_path):
+    res = run_backtest(
+        strategy_path="strategies/supertrend.py",
+        config_path="configs/futures.yaml",
+        out_dir=tmp_path,
+    )
     # Baseline: measured once and locked
-    assert res.final_equity == pytest.approx(10412.78, rel=0, abs=1e-9)
+    assert res.final_equity == pytest.approx(10556.16, abs=1e-2)
 ```
 
 If this test breaks after a code change, the result is affected.
@@ -365,8 +379,9 @@ If this test breaks after a code change, the result is affected.
 | Symptom | Cause / fix |
 |---|---|
 | `download_data` raises NetworkError | Exchange API blocked on this network. Try another network / VPN |
-| Result changes each run | Seed not fixed. Check `tick_synthesis.seed` in `configs/default.yaml` |
-| RSI / EMA value is None | Indicator not warm. Add `if not ind.is_warm: return` guard |
+| Result changes each run | Seed not fixed. Check `tick_synthesis.seed` in the config |
+| `Cannot MARKET SELL in spot mode` | Ran a short-taking strategy under a spot config. Short strategies like `supertrend` need `--config futures.yaml` |
+| RSI / EMA value is None | Indicator not warm. Add `if not ind.is_warm: return` guard (SuperTrend warms up after `ST_PERIOD` + 1 bars) |
 | `strategy not found` | Auto-resolution failed. Check `strategies/<name>.py` exists |
 | `final_equity` shrinks to cash | Old broker accounting bug. Refresh caches (`find . -name '*.pyc' -delete`) |
 | Stale .pyc on Windows | `find <src> -name '*.py' -exec touch {} +` to refresh mtimes |

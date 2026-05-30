@@ -139,17 +139,19 @@ def on_bar(bar):
 
 ### 5.1 가장 짧은 호출 (D17)
 
+번들 예시 전략 `supertrend` 로 실행 (숏 진입이 있어 선물 config 필요):
+
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
 ```
 
 `--strategy` 자동 해석 — 다음 4 가지 모두 동일하게 동작:
 
 ```powershell
-python scripts/run_backtest.py --strategy my_alpha
-python scripts/run_backtest.py --strategy my_alpha.py
-python scripts/run_backtest.py --strategy strategies/my_alpha.py
-python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml
+python scripts/run_backtest.py --strategy supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy strategies/supertrend.py --config futures.yaml
+python scripts/run_backtest.py --strategy /abs/path/to/supertrend.py --config futures.yaml
 ```
 
 ### 5.2 모든 옵션
@@ -193,14 +195,16 @@ python scripts/run_backtest.py --strategy /abs/path/to/my_alpha.py
 
 ```json
 {
-  "final_equity": 10412.78,
-  "total_return": 0.0413,
-  "sharpe": 0.92,
-  "sortino": 1.05,
-  "max_drawdown": -0.052,
-  "n_trades": 18,
-  "win_rate": 0.61,
-  "profit_factor": 1.42
+  "final_equity": 10556.16,
+  "total_return": 0.0556,
+  "cagr": 0.1148,
+  "sharpe": 1.42,
+  "sortino": 1.63,
+  "max_drawdown": -0.0478,
+  "calmar": 2.40,
+  "n_trades": 41,
+  "win_rate": 0.439,
+  "profit_factor": 1.41
 }
 ```
 
@@ -210,8 +214,8 @@ pandas 로 열어 임의 분석:
 
 ```python
 import pandas as pd
-eq = pd.read_parquet("reports/my_alpha_xxx/equity.parquet")
-trades = pd.read_parquet("reports/my_alpha_xxx/trades.parquet")
+eq = pd.read_parquet("reports/supertrend_xxx/equity.parquet")
+trades = pd.read_parquet("reports/supertrend_xxx/trades.parquet")
 
 # 일별 수익률 분포
 daily = eq.resample("1D").last().pct_change().dropna()
@@ -249,25 +253,25 @@ print(trades["holding_hours"].mean())
 
 ### 7.1 단일 변수 sweep
 
-`strategies/<your>.py` 상단의 모듈 상수 (예: `RSI_PERIOD`) 를 편집하고
+`strategies/supertrend.py` 상단의 모듈 상수 (예: `TP_R`) 를 편집하고
 `--out-dir` 로 결과 분리:
 
 ```powershell
-# rsi_mean_reversion.py 의 RSI_PERIOD = 7
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p7
+# supertrend.py 의 TP_R = 1.0
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp1.0
 
-# RSI_PERIOD = 14 로 바꾼 뒤
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p14
+# TP_R = 1.5 로 바꾼 뒤
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp1.5
 
-# 21 로 바꾼 뒤
-python scripts/run_backtest.py --strategy rsi_mean_reversion --out-dir reports/rsi_p21
+# 2.0 으로 바꾼 뒤
+python scripts/run_backtest.py --strategy supertrend --config futures.yaml --out-dir reports/st_tp2.0
 ```
 
 ### 7.2 메트릭 비교 스크립트
 
 ```python
 import json, pandas as pd
-runs = ["rsi_p7", "rsi_p14", "rsi_p21"]
+runs = ["st_tp1.0", "st_tp1.5", "st_tp2.0"]
 rows = []
 for r in runs:
     m = json.load(open(f"reports/{r}/metrics.json"))
@@ -291,16 +295,20 @@ print(df[["sharpe", "max_drawdown", "n_trades", "win_rate"]])
 같은 데이터/전략에 두 합성 알고리즘으로 굴려 metrics 비교:
 
 ```powershell
-python scripts/compare_runs.py backtest --strategy my_alpha
+python scripts/compare_runs.py backtest --strategy supertrend --config futures.yaml
 ```
 
 ```
 metric              uniform        bridge
-final_equity            10412.78        10421.05
-sharpe                      0.92            0.95
-max_drawdown               -0.052          -0.049
-n_trades                       18              18
+final_equity            10556.16        10255.82
+sharpe                      1.42            0.69
+max_drawdown               -0.0478         -0.0588
+n_trades                       41              41
 ```
+
+`supertrend` 는 손절/익절을 `on_tick` (봉 내부 합성 tick) 에서 검사하는 Pattern 2
+전략이라 **두 generator 결과가 갈립니다** — 합성 tick 경로가 청산 시점을 좌우하기
+때문입니다. `on_bar` 만 쓰는 전략이면 두 결과가 동일합니다.
 
 또는 단일 봉의 tick path 시각화:
 
@@ -325,10 +333,14 @@ JSON 은 `--json` 옵션을 가진 inspect_data 와 일관 형식.
 같은 seed → 동일 결과를 회귀 테스트로 보호:
 
 ```python
-def test_alpha_regression(tmp_path):
-    res = run_backtest(strategy_path="strategies/my_alpha.py", out_dir=tmp_path)
+def test_supertrend_regression(tmp_path):
+    res = run_backtest(
+        strategy_path="strategies/supertrend.py",
+        config_path="configs/futures.yaml",
+        out_dir=tmp_path,
+    )
     # Baseline: 처음에 한 번 측정한 값
-    assert res.final_equity == pytest.approx(10412.78, rel=0, abs=1e-9)
+    assert res.final_equity == pytest.approx(10556.16, abs=1e-2)
 ```
 
 코드를 수정한 뒤 이 테스트가 깨지면 결과에 영향이 있다는 신호.
@@ -340,8 +352,9 @@ def test_alpha_regression(tmp_path):
 | 증상 | 원인 / 해결 |
 |---|---|
 | `download_data` 가 NetworkError | 거래소 API 차단된 네트워크. 다른 네트워크 / VPN 시도 |
-| 결과가 매번 다름 | seed 가 고정 안 됨. `configs/default.yaml` 의 `tick_synthesis.seed` 확인 |
-| RSI/EMA value 가 None | 워밍업 미완료. `if not ind.is_warm: return` 가드 추가 |
+| 결과가 매번 다름 | seed 가 고정 안 됨. config 의 `tick_synthesis.seed` 확인 |
+| `Cannot MARKET SELL in spot mode` | 숏 진입 전략을 spot config 로 실행. `supertrend` 등 숏 전략은 `--config futures.yaml` 필요 |
+| RSI/EMA value 가 None | 워밍업 미완료. `if not ind.is_warm: return` 가드 추가 (SuperTrend 은 `ST_PERIOD` + 1 봉) |
 | `strategy not found` | 자동 해석 시도 후도 실패. `strategies/<name>.py` 위치 확인 |
 | `final_equity` 가 cash 만큼 작음 | broker 회계 버그 (선물/현물 혼합). 수정됨 — 캐시 갱신 (`find . -name '*.pyc' -delete`) |
 | Windows 에서 .pyc stale | `find <src> -name '*.py' -exec touch {} +` 로 mtime 갱신 |
