@@ -51,3 +51,8 @@ configs/vulture.yaml
 # diagnostic logs from `--viz 2> ...log` redirect
 *_diag.log
 vulture_diag.log
+
+# local dev artifacts (goal specs, viz CSV exports, smoke run outputs)
+goals/
+positions_history/
+runs/
