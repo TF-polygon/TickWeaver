@@ -92,6 +92,44 @@ def on_bar(bar):
 
 Convenience enums also auto-injected: `Side`, `OrderType`, `PositionSide`.
 
+### 4.1 Silencing IDE warnings -- the `TYPE_CHECKING` block
+
+The globals above are all **injected at runtime**, so IDEs / static analyzers
+(Pylance, Pyright, mypy) don't know about them -- names like `api`, `Side`,
+`PositionSide` get flagged red as "undefined". To silence this, put the
+following standard block at the top of every strategy file. It is never
+evaluated at runtime, so it has zero effect on behavior.
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
+
+
+def on_bar(bar: "OHLCBar") -> None:   # forward-ref annotation
+    api.market_buy(0.05)
+```
+
+Annotating the hook `bar` / `tick` / `fill` arguments with string forward-refs
+also turns on member completion (`bar.close`, `tick.price`, ...).
+`strategies/_starter.py` is the standard template, and every strategy under
+`strategies/*.py` follows this pattern. See `strategies/_reference_en.md` §0.4
+for the full explanation.
+
 ---
 
 ## 5. Pattern catalog

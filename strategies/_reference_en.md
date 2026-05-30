@@ -89,6 +89,62 @@ OVERSOLD = 30.0
 SIZE_PCT = 0.2
 ```
 
+### 0.4 Silencing IDE warnings -- the `TYPE_CHECKING` block
+
+`api`, `context`, and the enums (`Side` / `OrderType` / `PositionSide`) are all
+**injected at runtime** by FileStrategy into the module namespace. Static
+analyzers (Pylance / Pyright / mypy) don't know that, so they raise "undefined
+variable" warnings.
+
+To silence them, put the following **standard TYPE_CHECKING block** at the top
+of every strategy file. At runtime `TYPE_CHECKING == False`, so the inner
+imports and variable declarations are never executed -- they are pure IDE hints.
+
+```python
+"""my_alpha.py - one-line summary."""
+
+from typing import TYPE_CHECKING
+
+# Imports you actually use at runtime go here (e.g. indicators).
+from tickweaver.strategy.indicators import RSI
+
+if TYPE_CHECKING:
+    # Type stubs for IDE / linter only — never executed at runtime.
+    # FileStrategy injects these names into the module namespace right
+    # before on_init/on_bar/... are called.
+    from tickweaver.core.types import (
+        Fill,
+        OHLCBar,
+        OrderType,
+        PositionSide,
+        Side,
+        StrategyContext,
+        Tick,
+    )
+    from tickweaver.strategy.api import StrategyAPI
+
+    api: StrategyAPI
+    context: StrategyContext
+```
+
+Annotating the hook signatures with forward-refs turns on member completion for
+`bar.close`, `tick.price`, `fill.qty`, ...:
+
+```python
+def on_init() -> None: ...
+def on_bar(bar: "OHLCBar") -> None: ...
+def on_tick(tick: "Tick") -> None: ...
+def on_fill(fill: "Fill") -> None: ...
+def on_deinit() -> None: ...
+```
+
+**Why forward-refs (`"OHLCBar"`)**: a string annotation is not evaluated by
+Python at import time. `OHLCBar` and friends are imported only inside the
+`TYPE_CHECKING` block (undefined at runtime), so a bare `OHLCBar` annotation
+would raise NameError. The string forward-ref is the safe standard.
+
+A complete copy-paste template lives in `strategies/_starter.py`.
+
 ---
 
 ## 1. Lifecycle hooks (`on_init` / `on_bar` / `on_tick` / `on_fill` / `on_deinit`)
