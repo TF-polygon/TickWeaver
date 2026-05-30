@@ -239,6 +239,30 @@ The bundled `strategies/supertrend.py` is the canonical, fully working
 reference for this Pattern 2 (on_bar entry + on_tick SL/TP exit) -- read it
 to see a complete, runnable strategy of this shape.
 
+### 5.X Indicator visualization (`--viz`)
+
+Expose any indicator your strategy uses on the chart with one line:
+
+```python
+def on_init():
+    global ema, rsi
+    ema = EMA(period=20)
+    rsi = RSI(period=14)
+    api.bind_indicator("EMA 20", ema)    # PANEL='price' (default) -> candle overlay
+    api.bind_indicator("RSI",    rsi)    # PANEL='rsi'   (default) -> sub-panel
+```
+
+- When `--viz` is off, every viz call is a no-op, so it is safe to leave these
+  calls in production strategy code.
+- An indicator class must carry `PANEL` (required, str) + `SUBVALUES` (`None`
+  or a tuple) metadata. The ten built-ins (`SMA` / `EMA` / `RSI` / `ATR` /
+  `SuperTrend` / `MACD` / `BollingerBands` / `Stochastic` / `Pivot` / `HARSI`)
+  already define these.
+- Writing a custom indicator, multi-value decomposition (BB / MACD), style
+  override (`color=` / `width=`), and the external-value fallback
+  (`api.plot(name, value)`) -- see `strategies/_reference_en.md` §9 for the
+  full contract and pitfall checklist.
+
 ---
 
 ## 6. Common pitfalls
