@@ -67,7 +67,7 @@ import 방향은 위에서 아래로만. 레이어 위반은 PR 거절 (P5, plan
 | D3 | 단일 자산 (multi-symbol 비목표) |
 | D4 | Python 3.11+ |
 | D5 | pip + requirements*.txt |
-| D8 | 파일 기반 전략 (MT4 EA 스타일) + JSON 페어링 |
+| D8 | 파일 기반 전략 (MT4 EA 스타일); JSON 사이드파일 없음 (매매 파라미터 = 모듈 상수) |
 | D9 | 백테스트 = 항상 합성 tick 기반 |
 | D10 | 현 단계 데이터 출처 = CCXT only |
 | D11 | 현 단계 = backtest only (M5 archived) |
@@ -213,15 +213,14 @@ def compute_metrics(...):
     metrics["recovery_factor"] = ...
 ```
 
-### 4.6 Live broker 복원 (D11 해제)
+### 4.6 Live broker (D11 — 비목표)
 
-`_archive_live/` 안에 보존된 코드 복원 절차는 그쪽 README 에 있음. 핵심:
+라이브 트레이딩은 현재 비목표 (D11 — backtest only). M5 라이브 트레이딩 코드는 이 저장소에 포함돼 있지 않으므로 "복원" 절차도 없음.
 
-1. `_archive_live/{ccxt_broker.py, live_engine.py, monitoring/, run_live.py}` 를 원래 위치로 이동
-2. `requirements-live.txt` 활성화
-3. `monitoring/{kill_switch, alerts, healthcheck}` 검증
-4. `docs/live_deployment_checklist.md` 의 24h testnet 무사고 체크
-5. plan.md D11 archived 표시 제거
+개념적으로 라이브 모드를 되살리려면 다음이 새로 필요함:
+
+1. 라이브 broker 어댑터 — `Broker` Protocol (`submit` / `cancel` / `positions` / `on_market_event`) 를 실제 거래소 API 로 구현
+2. 라이브 엔진/러너 — WebSocket 등 실시간 피드를 받아 전략을 구동하는 BacktestEngine 대응물
 
 **중요**: P1 (single-strategy code) 를 깨지 않게 — 같은 전략 .py 가 backtest / live 둘 다에서 굴러가야 함.
 
@@ -399,7 +398,7 @@ semver 가이드:
 ## 10. 자주 묻는 개발 질문
 
 **Q. 새 거래소 (Bybit, Coinbase) 추가하려면?**
-A. CCXT 가 이미 지원하면 데이터 다운로드 측면은 즉시 됨 — `--exchange bybit` 만 바꿔서 시도. broker 측 어댑터는 `_archive_live/ccxt_broker.py` 의 `_BinanceAdapter` / `_OkxAdapter` 패턴 참고.
+A. CCXT 가 이미 지원하면 데이터 다운로드 측면은 즉시 됨 — `--exchange bybit` 만 바꿔서 시도 (`data/loaders/ccxt_loader.py` 의 `CcxtLoader`). broker 측 어댑터는 라이브 트레이딩용인데, 라이브는 비목표 (D11) 라 해당 없음.
 
 **Q. 멀티 자산 백테스트?**
 A. D3 단일 자산 가정이 깊게 박혀 있음 (Position 단수, BacktestBroker 단일 symbol). multi 는 plan.md §13.1 의 future work — `Engine` 과 `Broker` 대대적 수정 필요.

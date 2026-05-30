@@ -3,7 +3,7 @@
 > A backtest engine for OHLCV-based trading strategies. Reconstructs intra-bar
 > price paths as **synthesized ticks**, then runs your strategy on top of them.
 
-[![tests](https://img.shields.io/badge/tests-391%20passed-brightgreen)]()
+[![tests](https://img.shields.io/badge/tests-466%20passed-brightgreen)]()
 [![hypothesis](https://img.shields.io/badge/hypothesis-2380%2B%20cases-success)]()
 [![python](https://img.shields.io/badge/python-3.11+-blue)]()
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)]()
@@ -68,8 +68,9 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## What you get
 
-- **Six built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`, `MACD`,
-  `BollingerBands`. Common contract: `update / value / is_warm / reset`.
+- **Ten built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`,
+  `SuperTrend`, `MACD`, `BollingerBands`, `Stochastic`, `Pivot`, `HARSI`.
+  Common contract: `update / value / is_warm / reset`.
   Count-based (gap-safe), deterministic.
 - **All four major order types**: `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`.
   LIMIT fills as maker (no slippage). STOP triggers as taker. Lookahead
@@ -327,10 +328,10 @@ CCXT OHLCV download
 
 ## Current status
 
-- **M0~M4 and M6 complete.** 92 tests passing (including 2380+ hypothesis
+- **M0~M4 and M6 complete.** 466 tests passing (including 2380+ hypothesis
   property cases for the C1~C7 contract).
-- **M5 (live trading) archived** to `_archive_live/` per decision D11.
-  Restorable later.
+- **Backtest only (D11).** Live trading is out of scope; the M5 live-trading
+  code is not part of this repository.
 - Current data source is **CCXT only** (D10). External OHLCV loaders
   (CSV / Binance ZIP) are frozen as future work.
 
@@ -339,9 +340,9 @@ CCXT OHLCV download
 | ID | Decision |
 |---|---|
 | D2 | USDT-M Perpetual (futures) is the primary market type |
-| D8 | File-based strategy authoring (MT4 EA style) + JSON pairing |
+| D8 | File-based strategy authoring (MT4 EA style); no JSON side-files |
 | D10 | Current data source = CCXT only |
-| D11 | Backtest only; live archived to `_archive_live/` |
+| D11 | Backtest only; live trading out of scope (not in this repo) |
 | D12 | Synthetic tick precision = methodology, not a goal in itself |
 | D13 | Missing OHLCV bars: skip-only (no interpolation, no fail) |
 | D14 | Single-threaded execution |
@@ -364,5 +365,5 @@ first. Adding a new tick generator, indicator, or fee/slippage model is
 covered there as worked examples.
 
 When opening a PR:
-- run `pytest --hypothesis-show-statistics` and ensure all 92+ tests pass
+- run `pytest --hypothesis-show-statistics` and ensure all 466 tests pass
 - keep new modules import-clean (no circular imports across layers)

@@ -220,16 +220,17 @@ def compute_metrics(...):
     metrics["recovery_factor"] = ...
 ```
 
-### 4.6 Restore live broker (lift D11)
+### 4.6 Live broker (D11 -- out of scope)
 
-The frozen code in `_archive_live/` has its own README. Key steps:
+Live trading is out of scope (D11 -- backtest only). The M5 live-trading
+code is not part of this repository, so there is no restore procedure.
 
-1. Move `_archive_live/{ccxt_broker.py, live_engine.py, monitoring/, run_live.py}`
-   back to their original locations
-2. Enable `requirements-live.txt`
-3. Verify `monitoring/{kill_switch, alerts, healthcheck}`
-4. Run `docs/live_deployment_checklist.md` -- 24h testnet without incident
-5. Remove the archived marker in plan.md D11
+Conceptually, reviving live mode would require building two new pieces:
+
+1. A live broker adapter -- implement the `Broker` Protocol (`submit` /
+   `cancel` / `positions` / `on_market_event`) against a real exchange API
+2. A live engine/runner -- the BacktestEngine counterpart that drives the
+   strategy off a real-time feed (e.g. WebSocket)
 
 **Important**: do not break P1 (single-strategy code) -- the same strategy
 `.py` must run unchanged in both backtest and live.
@@ -423,8 +424,9 @@ Edit both `requirements.txt` and `pyproject.toml`. Dev-only:
 
 **Q. Add a new exchange (Bybit, Coinbase)?**
 A. If CCXT supports it, data download works immediately -- just change
-`--exchange bybit`. Broker adapters follow the `_archive_live/ccxt_broker.py`
-`_BinanceAdapter` / `_OkxAdapter` pattern.
+`--exchange bybit` (`CcxtLoader` in `data/loaders/ccxt_loader.py`). A live
+broker adapter would be needed for order routing, but live trading is out of
+scope (D11).
 
 **Q. Multi-asset backtest?**
 A. The D3 single-asset assumption is baked in deep (singular Position,

@@ -19,7 +19,7 @@ tickweaver 는 **OHLCV 데이터를 봉 내부 무작위 Tick 으로 합성한 �
 - **C1~C7 계약 (P2)**: 합성 tick 이 봉의 OHLC 와 모순되지 않음을 수학적으로 보장
 
 현 단계 비대상 (plan.md §1.3):
-- 실거래 (Live) — M5 코드는 `_archive_live/` 로 동결 (D11)
+- 실거래 (Live) — 비대상 (D11, backtest only). M5 실거래 코드는 이 저장소에 포함되지 않음
 - 외부 OHLCV 직접 입력 — CCXT 다운로드만 지원 (D10)
 - 호가창 시뮬레이션 / 옵션·파생 그릭
 
@@ -367,8 +367,8 @@ def test_supertrend_regression(tmp_path):
 ## 11. FAQ
 
 **Q. 실거래 가능?**
-A. 현 단계 D11 — backtest only. M5 Live 코드는 `_archive_live/` 에 보존,
-복원 절차는 `_archive_live/README.md`.
+A. 현 단계 D11 — backtest only. 실거래는 비대상이며, M5 실거래 코드는
+이 저장소에 포함되지 않음.
 
 **Q. 다중 자산 / 다중 전략?**
 A. 현 단계 D3 — 단일 자산만. multi 는 plan.md §13.1 의 future work.

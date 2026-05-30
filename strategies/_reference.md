@@ -586,7 +586,7 @@ def on_init():
 ## 8. FAQ
 
 **Q. 인디케이터 라이브러리가 있나?**
-A. `src/tickweaver/strategy/indicators.py` 에 streaming 형태로 6개 (메인 세트):
+A. `src/tickweaver/strategy/indicators.py` 에 streaming 형태로 10개 (메인 세트):
 
 | 클래스 | 시그니처 | 워밍업 |
 |---|---|---|
@@ -594,8 +594,12 @@ A. `src/tickweaver/strategy/indicators.py` 에 streaming 형태로 6개 (메인 
 | `EMA(period)` | `update(price) -> ema \| None` (SMA 시드 후 alpha 가중) | period 봉 |
 | `RSI(period=14)` | `update(price) -> rsi \| None` (Wilder smoothing) | period+1 봉 |
 | `ATR(period=14)` | `update(high, low, close)` 또는 `update_bar(bar)` | period 봉 |
+| `SuperTrend(period=10, multiplier=3.0)` | `update(high, low, close)` 또는 `update_bar(bar)` → `.value / .direction` (ATR 기반 추세 필터 / flip 라인) | period 봉 |
 | `MACD(fast=12, slow=26, signal=9)` | `update(price)` → `.macd / .signal / .histogram` | slow + signal 봉 |
 | `BollingerBands(period=20, mult=2.0)` | `update(price) -> (mid, upper, lower) \| None` | period 봉 |
+| `Stochastic(period=14, k_smooth=3, d_smooth=3)` | `update(high, low, close) -> (K, D)` (이중 평활 %K/%D 오실레이터) | 약 period + k_smooth + d_smooth 봉 |
+| `Pivot(period=5)` | `update(high, low)` → `.last_pivot_high / .last_pivot_low`, `is_higher_low()` / `is_lower_high()` (Williams 프랙탈 스윙 고점/저점) | ≥ 2*period+1 봉 |
+| `HARSI(rsi_len=7, harsi_len=14, smoothing=7, mode=True)` | `update(open, high, low, close)` → HA 캔들 + `.overlay`, `.dot_signal()` (Heikin-Ashi RSI 캔들 + RSI overlay) | harsi_len + 1 봉 |
 
 공통 패턴: `value` (None until warm), `is_warm: bool`, `reset()`.
 
@@ -677,7 +681,7 @@ viz layer가 indicator 객체에 요구하는 인터페이스:
 
 > `update(...)` 시그니처는 viz 가 강제하지 않습니다. strategy 가 알아서 호출 (`.update(bar.close)`, `.update_bar(bar)`, `.update(h, l, c)` 등).
 
-### 9.3 기본 6 종 indicator 의 default 메타데이터
+### 9.3 기본 10 종 indicator 의 default 메타데이터
 
 | 클래스 | `PANEL` | `SUBVALUES` |
 |---|---|---|
@@ -685,8 +689,12 @@ viz layer가 indicator 객체에 요구하는 인터페이스:
 | `EMA` | `"price"` | `None` |
 | `RSI` | `"rsi"` | `None` |
 | `ATR` | `"atr"` | `None` |
+| `SuperTrend` | `"price"` | `None` |
 | `MACD` | `"macd"` | `("macd", "signal", "histogram")` |
 | `BollingerBands` | `"price"` | `("middle", "upper", "lower")` |
+| `Stochastic` | `"stoch"` | `("K", "D")` |
+| `Pivot` | `"price"` | `None` |
+| `HARSI` | `"harsi"` | `("ha_open", "ha_high", "ha_low", "ha_close", "overlay")` |
 
 ### 9.4 커스텀 indicator 작성
 

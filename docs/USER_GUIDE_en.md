@@ -22,7 +22,7 @@ strategies on top of them**. Key differentiators:
 
 Out of scope at this stage:
 
-- Live trading -- M5 code frozen under `_archive_live/` (D11)
+- Live trading -- out of scope (D11, backtest only). The M5 live-trading code is not included in this repository
 - External OHLCV (CSV / Binance ZIP) -- CCXT only (D10)
 - Orderbook simulation / option Greeks
 
@@ -394,8 +394,8 @@ If this test breaks after a code change, the result is affected.
 ## 11. FAQ
 
 **Q. Can I trade live?**
-A. Not at this stage (D11 -- backtest only). M5 live code is preserved in
-`_archive_live/`; see its README for the restore procedure.
+A. Not at this stage (D11 -- backtest only). Live trading is out of scope,
+and the M5 live-trading code is not included in this repository.
 
 **Q. Multi-asset or multi-strategy?**
 A. Single-asset only at this stage (D3). Multi is future work.

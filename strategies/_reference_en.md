@@ -588,7 +588,7 @@ def on_init():
 ## 8. FAQ
 
 **Q. Is there an indicator library?**
-A. Yes -- `src/tickweaver/strategy/indicators.py` provides six streaming
+A. Yes -- `src/tickweaver/strategy/indicators.py` provides ten streaming
 indicators:
 
 | Class | Signature | Warm-up |
@@ -597,8 +597,12 @@ indicators:
 | `EMA(period)` | `update(price) -> ema \| None` (SMA seed + alpha weighting) | period bars |
 | `RSI(period=14)` | `update(price) -> rsi \| None` (Wilder smoothing) | period + 1 bars |
 | `ATR(period=14)` | `update(high, low, close)` or `update_bar(bar)` | period bars |
+| `SuperTrend(period=10, multiplier=3.0)` | `update(high, low, close)` or `update_bar(bar)` → `.value / .direction` (ATR-based trend filter / flip line) | period bars |
 | `MACD(fast=12, slow=26, signal=9)` | `update(price)` → `.macd / .signal / .histogram` | slow + signal bars |
 | `BollingerBands(period=20, mult=2.0)` | `update(price) -> (mid, upper, lower) \| None` | period bars |
+| `Stochastic(period=14, k_smooth=3, d_smooth=3)` | `update(high, low, close) -> (K, D)` (double-smoothed %K/%D oscillator) | ~ period + k_smooth + d_smooth bars |
+| `Pivot(period=5)` | `update(high, low)` → `.last_pivot_high / .last_pivot_low`, `is_higher_low()` / `is_lower_high()` (Williams-fractal swing high/low) | ≥ 2*period+1 bars |
+| `HARSI(rsi_len=7, harsi_len=14, smoothing=7, mode=True)` | `update(open, high, low, close)` → HA candle + `.overlay`, `.dot_signal()` (Heikin-Ashi RSI candles + RSI overlay) | harsi_len + 1 bars |
 
 Common pattern: `value` (None until warm), `is_warm: bool`, `reset()`.
 
@@ -697,7 +701,7 @@ The viz layer requires the following interface on any indicator object:
 > the indicator on its own terms (`.update(bar.close)`, `.update_bar(bar)`,
 > `.update(h, l, c)`, ...).
 
-### 9.3 Default metadata on the six built-in indicators
+### 9.3 Default metadata on the ten built-in indicators
 
 | Class | `PANEL` | `SUBVALUES` |
 |---|---|---|
@@ -705,8 +709,12 @@ The viz layer requires the following interface on any indicator object:
 | `EMA` | `"price"` | `None` |
 | `RSI` | `"rsi"` | `None` |
 | `ATR` | `"atr"` | `None` |
+| `SuperTrend` | `"price"` | `None` |
 | `MACD` | `"macd"` | `("macd", "signal", "histogram")` |
 | `BollingerBands` | `"price"` | `("middle", "upper", "lower")` |
+| `Stochastic` | `"stoch"` | `("K", "D")` |
+| `Pivot` | `"price"` | `None` |
+| `HARSI` | `"harsi"` | `("ha_open", "ha_high", "ha_low", "ha_close", "overlay")` |
 
 ### 9.4 Authoring a custom indicator
 
