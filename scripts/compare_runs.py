@@ -30,9 +30,24 @@ import typer  # noqa: E402
 from tickweaver.core.types import OHLCBar  # noqa: E402
 from tickweaver.engine.runner import run_backtest  # noqa: E402
 from tickweaver.tick_synthesis.generator import get_tick_generator  # noqa: E402
-from tickweaver.utils.paths import resolve_strategy_path  # noqa: E402
+from tickweaver.utils.paths import CONFIGS_DIR, resolve_strategy_path  # noqa: E402
 
 app = typer.Typer(add_completion=False, help="uniform vs bridge comparison (D16)")
+
+
+def _resolve_config_path(raw: Path | None) -> Path | None:
+    """Resolve --config the same way run_backtest.py does: a bare filename
+    (e.g. ``futures.yaml``) looks up under configs/; a path with a separator or
+    an absolute path is used as given; None lets the runner pick the default."""
+    if raw is None:
+        return None
+    p = Path(raw)
+    if p.is_absolute():
+        return p
+    s = str(raw)
+    if "/" in s or "\\" in s:
+        return p
+    return CONFIGS_DIR / p
 
 
 @app.command(name="preview")
@@ -97,7 +112,6 @@ def _format_diff_row(label: str, u_val, b_val, fmt: str = "{:.4f}") -> str:
 def backtest_cmd(
     strategy: Path = typer.Option(..., "--strategy", "-s"),
     config: Path | None = typer.Option(None, "--config", "-c"),
-    source: Path | None = typer.Option(None, "--source"),
     out_root: Path = typer.Option(
         Path("reports"), "--out-root",
         help="root dir; sub-dirs <strategy>_uniform / <strategy>_bridge created",
@@ -111,13 +125,14 @@ def backtest_cmd(
     u_dir = out_root / f"{stem}_uniform"
     b_dir = out_root / f"{stem}_bridge"
 
-    u_res = run_backtest(
-        strategy_path=resolved, out_dir=u_dir, config_path=config,
-        source=source, generator_override="uniform",
+    resolved_config = _resolve_config_path(config)
+    run_backtest(
+        strategy_path=resolved, out_dir=u_dir, config_path=resolved_config,
+        generator_override="uniform",
     )
-    b_res = run_backtest(
-        strategy_path=resolved, out_dir=b_dir, config_path=config,
-        source=source, generator_override="bridge",
+    run_backtest(
+        strategy_path=resolved, out_dir=b_dir, config_path=resolved_config,
+        generator_override="bridge",
     )
 
     u_m = _load_metrics(u_dir)
