@@ -36,13 +36,39 @@ import numpy as np
 
 
 # ---------------------------------------------------------------------------
+# Indicator — shared streaming-indicator base
+# ---------------------------------------------------------------------------
+class Indicator:
+    """Common contract for all streaming indicators (see module docstring).
+
+    Single-value indicators store their latest result in ``self._value`` and
+    inherit ``value`` / ``is_warm`` unchanged. Multi-value or state-based
+    indicators (BollingerBands, Stochastic, Pivot, HARSI) override these. Every
+    subclass implements its own ``update(...)`` and ``reset()``.
+
+    ``PANEL`` / ``SUBVALUES`` are viz metadata; subclasses override them only
+    when they differ from the defaults below.
+    """
+
+    PANEL: str = "price"
+    SUBVALUES: tuple[str, ...] | None = None
+
+    _value: float | None = None
+
+    @property
+    def value(self) -> float | None:
+        return self._value
+
+    @property
+    def is_warm(self) -> bool:
+        return self._value is not None
+
+
+# ---------------------------------------------------------------------------
 # SMA — Simple Moving Average
 # ---------------------------------------------------------------------------
-class SMA:
+class SMA(Indicator):
     """Rolling arithmetic mean over the last `period` updates."""
-
-    PANEL = "price"
-    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int) -> None:
         if period < 1:
@@ -50,6 +76,7 @@ class SMA:
         self.period = int(period)
         self._buf: deque[float] = deque(maxlen=self.period)
         self._sum: float = 0.0
+        self._value: float | None = None
 
     def update(self, price: float) -> float | None:
         price = float(price)
@@ -59,31 +86,20 @@ class SMA:
         self._sum += price
         if len(self._buf) < self.period:
             return None
-        return self._sum / self.period
-
-    @property
-    def value(self) -> float | None:
-        if len(self._buf) < self.period:
-            return None
-        return self._sum / self.period
-
-    @property
-    def is_warm(self) -> bool:
-        return len(self._buf) >= self.period
+        self._value = self._sum / self.period
+        return self._value
 
     def reset(self) -> None:
         self._buf.clear()
         self._sum = 0.0
+        self._value = None
 
 
 # ---------------------------------------------------------------------------
 # EMA — Exponential Moving Average (SMA-seeded, TradingView/MT4 style)
 # ---------------------------------------------------------------------------
-class EMA:
+class EMA(Indicator):
     """EMA seeded with SMA over the first `period` values, then alpha smoothed."""
-
-    PANEL = "price"
-    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int) -> None:
         if period < 1:
@@ -104,14 +120,6 @@ class EMA:
             self._value = self.alpha * price + (1.0 - self.alpha) * self._value
         return self._value
 
-    @property
-    def value(self) -> float | None:
-        return self._value
-
-    @property
-    def is_warm(self) -> bool:
-        return self._value is not None
-
     def reset(self) -> None:
         self._buf = []
         self._value = None
@@ -120,14 +128,13 @@ class EMA:
 # ---------------------------------------------------------------------------
 # RSI — Wilders smoothing
 # ---------------------------------------------------------------------------
-class RSI:
+class RSI(Indicator):
     """Relative Strength Index using Wilder smoothing.
 
     Warm-up takes period + 1 prices (need `period` deltas). value in [0, 100].
     """
 
     PANEL = "rsi"
-    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int = 14) -> None:
         if period < 2:
@@ -178,14 +185,6 @@ class RSI:
         rs = self._avg_gain / self._avg_loss
         return 100.0 - 100.0 / (1.0 + rs)
 
-    @property
-    def value(self) -> float | None:
-        return self._value
-
-    @property
-    def is_warm(self) -> bool:
-        return self._value is not None
-
     def reset(self) -> None:
         self._prev_price = None
         self._gains = []
@@ -198,14 +197,13 @@ class RSI:
 # ---------------------------------------------------------------------------
 # ATR — Average True Range (bar-level)
 # ---------------------------------------------------------------------------
-class ATR:
+class ATR(Indicator):
     """Wilder-smoothed Average True Range. Uses high/low/close.
 
     Use update_bar(bar) for OHLCBar, or update(high, low, close).
     """
 
     PANEL = "atr"
-    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int = 14) -> None:
         if period < 1:
@@ -237,14 +235,6 @@ class ATR:
     def update_bar(self, bar) -> float | None:
         return self.update(bar.high, bar.low, bar.close)
 
-    @property
-    def value(self) -> float | None:
-        return self._value
-
-    @property
-    def is_warm(self) -> bool:
-        return self._value is not None
-
     def reset(self) -> None:
         self._prev_close = None
         self._buf = []
@@ -254,7 +244,7 @@ class ATR:
 # ---------------------------------------------------------------------------
 # SuperTrend — ATR bands trend filter (bar-level)
 # ---------------------------------------------------------------------------
-class SuperTrend:
+class SuperTrend(Indicator):
     """SuperTrend trend filter built on ATR.
 
     Standard algorithm: basic bands = hl2 ± multiplier * ATR, carried forward
@@ -268,9 +258,6 @@ class SuperTrend:
     Use update_bar(bar) for an OHLCBar, or update(high, low, close).
     """
 
-    PANEL = "price"
-    SUBVALUES: tuple[str, ...] | None = None
-
     def __init__(self, period: int = 10, multiplier: float = 3.0) -> None:
         if period < 1:
             raise ValueError(f"SuperTrend period must be >= 1, got {period}")
@@ -282,7 +269,7 @@ class SuperTrend:
         self._prev_close: float | None = None
         self._final_upper: float | None = None
         self._final_lower: float | None = None
-        self._st: float | None = None
+        self._value: float | None = None
         self._dir: int | None = None
 
     def update(self, high: float, low: float, close: float) -> float | None:
@@ -296,16 +283,16 @@ class SuperTrend:
         basic_upper = hl2 + self.multiplier * atr
         basic_lower = hl2 - self.multiplier * atr
 
-        if self._st is None:
+        if self._value is None:
             # First computable bar — seed bands + direction from close vs hl2.
             self._final_upper = basic_upper
             self._final_lower = basic_lower
             if c > hl2:
-                self._dir, self._st = 1, basic_lower
+                self._dir, self._value = 1, basic_lower
             else:
-                self._dir, self._st = -1, basic_upper
+                self._dir, self._value = -1, basic_upper
             self._prev_close = c
-            return self._st
+            return self._value
 
         prev_close = self._prev_close
         prev_fu = self._final_upper
@@ -319,52 +306,44 @@ class SuperTrend:
             basic_lower if (basic_lower > prev_fl or prev_close < prev_fl) else prev_fl
         )
 
-        if self._st == prev_fu:
+        if self._value == prev_fu:
             # Was bearish (line on upper band): flip up if close breaks above.
             if c > final_upper:
-                self._dir, self._st = 1, final_lower
+                self._dir, self._value = 1, final_lower
             else:
-                self._dir, self._st = -1, final_upper
+                self._dir, self._value = -1, final_upper
         else:
             # Was bullish (line on lower band): flip down if close breaks below.
             if c < final_lower:
-                self._dir, self._st = -1, final_upper
+                self._dir, self._value = -1, final_upper
             else:
-                self._dir, self._st = 1, final_lower
+                self._dir, self._value = 1, final_lower
 
         self._final_upper = final_upper
         self._final_lower = final_lower
         self._prev_close = c
-        return self._st
+        return self._value
 
     def update_bar(self, bar) -> float | None:
         return self.update(bar.high, bar.low, bar.close)
 
     @property
-    def value(self) -> float | None:
-        return self._st
-
-    @property
     def direction(self) -> int | None:
         return self._dir
-
-    @property
-    def is_warm(self) -> bool:
-        return self._st is not None
 
     def reset(self) -> None:
         self._atr.reset()
         self._prev_close = None
         self._final_upper = None
         self._final_lower = None
-        self._st = None
+        self._value = None
         self._dir = None
 
 
 # ---------------------------------------------------------------------------
 # MACD — fast EMA - slow EMA, with signal line + histogram
 # ---------------------------------------------------------------------------
-class MACD:
+class MACD(Indicator):
     """MACD = EMA(fast) - EMA(slow); signal = EMA(signal_period) of MACD."""
 
     PANEL = "macd"
@@ -379,7 +358,7 @@ class MACD:
         self._fast = EMA(self.fast_period)
         self._slow = EMA(self.slow_period)
         self._signal = EMA(self.signal_period)
-        self._macd: float | None = None
+        self._value: float | None = None  # the MACD line
         self._hist: float | None = None
 
     def update(self, price: float) -> float | None:
@@ -387,15 +366,16 @@ class MACD:
         self._slow.update(price)
         if self._fast.value is None or self._slow.value is None:
             return None
-        self._macd = self._fast.value - self._slow.value
-        self._signal.update(self._macd)
+        self._value = self._fast.value - self._slow.value
+        self._signal.update(self._value)
         if self._signal.value is not None:
-            self._hist = self._macd - self._signal.value
-        return self._macd
+            self._hist = self._value - self._signal.value
+        return self._value
 
     @property
     def macd(self) -> float | None:
-        return self._macd
+        # Convention: value == macd line for compatibility.
+        return self._value
 
     @property
     def signal(self) -> float | None:
@@ -406,11 +386,6 @@ class MACD:
         return self._hist
 
     @property
-    def value(self) -> float | None:
-        # Convention: value == macd line for compatibility.
-        return self._macd
-
-    @property
     def is_warm(self) -> bool:
         return self._hist is not None
 
@@ -418,20 +393,19 @@ class MACD:
         self._fast.reset()
         self._slow.reset()
         self._signal.reset()
-        self._macd = None
+        self._value = None
         self._hist = None
 
 
 # ---------------------------------------------------------------------------
 # BollingerBands — SMA +/- mult * stddev
 # ---------------------------------------------------------------------------
-class BollingerBands:
+class BollingerBands(Indicator):
     """Bollinger Bands: middle = SMA(period), upper/lower = mid +/- mult * sigma.
 
     Uses population std (ddof=0), matching TradingView default.
     """
 
-    PANEL = "price"
     SUBVALUES: tuple[str, ...] | None = ("middle", "upper", "lower")
 
     def __init__(self, period: int = 20, mult: float = 2.0) -> None:
@@ -493,7 +467,7 @@ __all__ = ["SMA", "EMA", "RSI", "ATR", "SuperTrend", "MACD", "BollingerBands"]
 # ---------------------------------------------------------------------------
 # Stochastic Oscillator (Phase V2.1, Vulture porting)
 # ---------------------------------------------------------------------------
-class Stochastic:
+class Stochastic(Indicator):
     """Stochastic Oscillator with double smoothing (MT4-compatible).
 
     raw_K(t) = (close - LL_n) / (HH_n - LL_n) * 100
@@ -505,7 +479,7 @@ class Stochastic:
     """
 
     PANEL = "stoch"
-    SUBVALUES: tuple[str, ...] | None = ("K", "D")
+    SUBVALUES = ("K", "D")
 
     def __init__(self, period: int = 14, k_smooth: int = 3, d_smooth: int = 3) -> None:
         if period < 1 or k_smooth < 1 or d_smooth < 1:
@@ -581,7 +555,7 @@ class Stochastic:
 # ---------------------------------------------------------------------------
 # Pivot (swing high/low, Phase V2.2 Vulture porting)
 # ---------------------------------------------------------------------------
-class Pivot:
+class Pivot(Indicator):
     """Swing-point pivot indicator (Williams fractal style).
 
     `period=N` means a bar's high (or low) is a confirmed pivot once N bars
@@ -592,9 +566,6 @@ class Pivot:
       - is_higher_low()  : last pivot low > second-last pivot low (uptrend)
       - is_lower_high()  : last pivot high < second-last pivot high (downtrend)
     """
-
-    PANEL = "price"
-    SUBVALUES: tuple[str, ...] | None = None
 
     def __init__(self, period: int = 5) -> None:
         if period < 1:
@@ -686,7 +657,7 @@ class Pivot:
 # ---------------------------------------------------------------------------
 # HARSI — Heikin Ashi RSI (Phase V2.3, Vulture porting)
 # ---------------------------------------------------------------------------
-class HARSI:
+class HARSI(Indicator):
     """Pine Script 1:1 port of JayRogers' "HARSI Dot Signal".
 
     Streams three close/high/low RSI of `harsi_len` (zero-median, value-50),
@@ -698,7 +669,7 @@ class HARSI:
     """
 
     PANEL = "harsi"
-    SUBVALUES: tuple[str, ...] | None = (
+    SUBVALUES = (
         "ha_open",
         "ha_high",
         "ha_low",
