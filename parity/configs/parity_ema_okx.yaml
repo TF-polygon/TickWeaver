@@ -1,0 +1,45 @@
+# parity_ema_okx.yaml — parity config matching the user's TradingView run.
+#
+# The user ran parity/pine/ema_cross.pine on TradingView with:
+#   exchange OKX, BTCUSDT.P, 1h, ~2026-01-01 onward, commission 0, capital 10000.
+# This config aligns TickWeaver to that EXACT setup so the two are comparable.
+#
+# PINNED-FOR-PARITY (must match the TradingView run):
+#   run.initial_capital : 10000.0  == TradingView initial capital
+#   execution.commission: 0.0      == TradingView commission 0% (confirmed: CSV
+#                                     Net PnL equals gross PnL → no fee applied)
+#   execution.slippage  : 0.0      == TradingView slippage 0
+#   data.exchange/symbol/timeframe/dates == the OKX 1h chart window
+
+run:
+  initial_capital: 10000.0
+  mode: futures                     # use SWAP/perp OHLCV to match TradingView
+                                    # BTCUSDT.P; ema_cross is long-only so futures
+                                    # mode (leverage 1.0) trades exactly like spot.
+  leverage: 1.0
+
+data:
+  exchange: okx
+  symbol: "BTC/USDT:USDT"
+  timeframe: "1h"
+  start_date: "2026-01-01"          # inclusive — same start as the TV chart
+  end_date:   "2026-06-04"          # exclusive — covers the last TV trade (06-01)
+
+execution:
+  commission: 0.0                   # PINNED: TradingView run used 0% commission
+  slippage:   0.0                   # PINNED: off for parity determinism
+  spread:     0.0
+
+tick_synthesis:
+  generator: uniform
+  n_ticks_min: 8
+  n_ticks_max: 256
+  seed: 42                          # deterministic (EMA cross is Pattern-1; ticks
+                                    # don't affect its next-bar-open fills)
+
+reporting:
+  out_dir: null
+  dump_ticks: 0
+
+logging:
+  level: INFO

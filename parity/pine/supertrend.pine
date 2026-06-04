@@ -1,0 +1,138 @@
+//@version=5
+// =============================================================================
+// supertrend.pine — TradingView (PineScript v5) parity reference for TickWeaver.
+//
+// Mirrors: strategies/supertrend.py  (ST_PERIOD=10, ST_MULT=3.0,
+//          SWING_LOOKBACK=2, TP_R=1.5, SIZE_PCT=0.2; long+short futures.
+//          On a SuperTrend flip while flat: enter; SL = most-recent confirmed
+//          swing pivot, TP = 1.5R; SL/TP enforced intrabar).
+// Config:  parity/configs/parity_supertrend.yaml  (initial_capital=10000,
+//          mode=futures, commission=0.05% per side, slippage=0).
+//
+// HOW TO RUN (the data MUST match TickWeaver or results are not comparable):
+//   1. Chart symbol:  BINANCE:BTCUSDT.P     (USDT-M perpetual — NOT spot BTCUSDT)
+//   2. Timeframe:     1h
+//   3. Paste into Pine Editor -> "Add to chart".
+//   4. The Start/End inputs below pin the parity window to
+//        2024-01-01 00:00 -> 2024-07-01 00:00 UTC (end exclusive),
+//      matching parity_supertrend.yaml start_date/end_date.
+//   5. Strategy Tester -> export "List of Trades" CSV and "Performance Summary" CSV.
+//
+// DIRECTION SIGN CONVENTION (read carefully — easy to get backwards):
+//   Pine `[st, dir] = ta.supertrend(factor, len)` returns a `direction` that is
+//     dir == -1  ->  UPTREND   (close ABOVE supertrend)  == bullish
+//     dir == +1  ->  DOWNTREND (close BELOW supertrend)  == bearish
+//   This is the INVERSE of TickWeaver's SuperTrend.direction
+//   (src/tickweaver/strategy/indicators.py), where +1 == bullish, -1 == bearish.
+//   Mapping used below:
+//     TickWeaver buy_flip  (prev_dir -1 -> +1, bearish->bullish)
+//        == Pine  dir +1 -> -1   i.e. dir < dir[1]
+//     TickWeaver sell_flip (prev_dir +1 -> -1, bullish->bearish)
+//        == Pine  dir -1 -> +1   i.e. dir > dir[1]
+//
+// KNOWN DIVERGENCE SOURCES (why TW and TV may differ within medium tolerance —
+//   aggregate metrics <=5%, trade count exact +-1):
+//   1. ** THE HEADLINE (whole reason SuperTrend is in the benchmark) **
+//      Intrabar SL/TP fill path. TickWeaver enforces SL/TP against a SYNTHESIZED
+//      intrabar tick path (uniform generator, seed=42, 8..256 ticks/bar) and
+//      closes at the actual price the synthetic wick reaches, SL checked before
+//      TP. TradingView has no ticks: `strategy.exit` resolves stop+limit from
+//      the bar's OHLC assuming a worst-case path (when both the stop and the
+//      limit fall inside one bar's range, Pine fills the STOP first). On bars
+//      where both SL and TP are touchable intrabar the two engines pick
+//      different exits — so per-trade exit prices AND even the trade count can
+//      diverge. This is the expected, intended divergence.
+//   2. SuperTrend ATR seeding/warmup. Pine `ta.supertrend` builds on `ta.atr`
+//      (RMA / Wilder smoothing, SMA-seeded over the first `len` true ranges).
+//      TickWeaver's ATR is also Wilder-smoothed and SMA-seeded, so the steady
+//      state matches, but TradingView warms the indicator on chart history
+//      BEFORE 2024-01-01 while TickWeaver warms only from its data start — so
+//      the first in-window flip can shift by a bar.
+//   3. Pivot tie-breaking. TickWeaver confirms a swing low/high with a
+//      NON-STRICT compare (`low == min(window)`), so flat/equal wicks still
+//      qualify; Pine `ta.pivotlow/high` requires STRICTLY lower/higher
+//      neighbours. Equal-extreme bars can produce a different "last pivot",
+//      shifting an SL level (and gating).
+//   4. Entry reference price. TickWeaver computes TP from the ACTUAL fill price
+//      (next bar's first synthetic tick); this script computes TP from the
+//      signal bar `close`. With process_orders_on_close=false the Pine entry
+//      itself also fills at the next bar open, so the reference differs by the
+//      close->open gap.
+//   5. Cash-vs-equity sizing. TickWeaver sizes from CASH
+//      (api.size_from_cash_pct(0.2, close)); Pine
+//      default_qty_type=strategy.percent_of_equity sizes from EQUITY. They
+//      coincide while flat but diverge slightly via fees/rounding.
+//   6. Open position at window end. TickWeaver final_equity is mark-to-market;
+//      TradingView "Net Profit" is realized (closed trades only). An entry still
+//      open at 2024-07-01 differs by its unrealized PnL. This script does NOT
+//      force-close at the window end (forcing it would add a closed trade
+//      TickWeaver does not count). Note any open trade when reading results.
+// =============================================================================
+strategy("TickWeaver Parity — SuperTrend",
+     overlay                 = true,
+     initial_capital         = 10000,
+     currency                = currency.NONE,
+     default_qty_type        = strategy.percent_of_equity,
+     default_qty_value       = 20,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.05,
+     slippage                = 0,
+     pyramiding              = 0,
+     process_orders_on_close = false,
+     calc_on_every_tick      = false)
+
+// ── parameters (mirror the module constants in supertrend.py) ────────────────
+ST_PERIOD      = input.int(10, "SuperTrend ATR length")
+ST_MULT        = input.float(3.0, "SuperTrend ATR multiplier")
+SWING_LOOKBACK = input.int(2, "Swing pivot lookback (bars each side)")
+TP_R           = input.float(1.5, "Take-profit R multiple")
+
+// ── parity date window (UTC, end exclusive — matches TickWeaver start/end) ───
+useDateFilter = input.bool(true, "Limit trading to parity window")
+startTime     = input.time(timestamp("2024-01-01 00:00 +0000"), "Start (UTC, inclusive)")
+endTime       = input.time(timestamp("2024-07-01 00:00 +0000"), "End (UTC, exclusive)")
+inWindow = not useDateFilter or (time >= startTime and time < endTime)
+
+// ── SuperTrend (see DIRECTION SIGN CONVENTION above) ─────────────────────────
+[st, dir] = ta.supertrend(ST_MULT, ST_PERIOD)
+plot(dir < 0 ? st : na, "SuperTrend Up", color = color.lime, style = plot.style_linebr)
+plot(dir > 0 ? st : na, "SuperTrend Dn", color = color.red,  style = plot.style_linebr)
+
+// Pine dir +1->-1 (down->up) == TickWeaver bearish->bullish == buy flip.
+buyFlip  = dir < dir[1]
+// Pine dir -1->+1 (up->down) == TickWeaver bullish->bearish == sell flip.
+sellFlip = dir > dir[1]
+
+// ── swing pivots (track the most-recent CONFIRMED pivot, carried forward) ────
+pivotLowVal  = ta.pivotlow(SWING_LOOKBACK, SWING_LOOKBACK)
+pivotHighVal = ta.pivothigh(SWING_LOOKBACK, SWING_LOOKBACK)
+var float lastPivotLow  = na
+var float lastPivotHigh = na
+if not na(pivotLowVal)
+    lastPivotLow := pivotLowVal
+if not na(pivotHighVal)
+    lastPivotHigh := pivotHighVal
+
+// ── trading logic (enter on flip when flat; SL = swing pivot, TP = 1.5R) ─────
+var float slPrice = na
+var float tpPrice = na
+
+if inWindow and strategy.position_size == 0
+    // Long: only if the swing low sits below price (room for a stop).
+    if buyFlip and not na(lastPivotLow) and lastPivotLow < close
+        slPrice := lastPivotLow
+        tpPrice := close + TP_R * (close - slPrice)
+        strategy.entry("long", strategy.long)
+    // Short: only if the swing high sits above price.
+    else if sellFlip and not na(lastPivotHigh) and lastPivotHigh > close
+        slPrice := lastPivotHigh
+        tpPrice := close - TP_R * (slPrice - close)
+        strategy.entry("short", strategy.short)
+
+// Keep the bracket exit live while in a position (stop+limit, intrabar). Pine
+// fills the STOP first when both are inside one bar — the SL-first convention
+// that diverges from TickWeaver's synthetic tick path (divergence #1).
+if strategy.position_size > 0
+    strategy.exit("long_x", from_entry = "long", stop = slPrice, limit = tpPrice)
+else if strategy.position_size < 0
+    strategy.exit("short_x", from_entry = "short", stop = slPrice, limit = tpPrice)

@@ -1,0 +1,44 @@
+# parity_ema.yaml — TradingView parity config for test_strategy/ema_cross.py.
+#
+# Copied from configs/default.yaml, then PINNED for deterministic, reproducible
+# comparison against parity/pine/ema_cross.pine. Every pinned value below must
+# match the corresponding `strategy(...)` argument in the .pine file.
+#
+# PINNED-FOR-PARITY values (do not change one side without the other):
+#   run.initial_capital : 10000.0  == .pine initial_capital=10000
+#   execution.commission: 0.05     == .pine commission_value=0.05 (0.05% per side)
+#   execution.slippage  : 0.0      == .pine slippage=0  (off, removes a random
+#                                     divergence source between the two engines)
+#   execution.spread    : 0.0      == no synthetic spread (Pine has none)
+#
+# Cost fields use PERCENT units: 0.05 means 0.05%, NOT 5%.
+
+run:
+  initial_capital: 10000.0          # PINNED: matches .pine initial_capital
+  mode: spot                        # EMA cross is long-only spot
+  leverage: 1.0
+
+data:
+  exchange: binance
+  symbol: "BTC/USDT:USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"          # inclusive (YYYY-MM-DD)
+  end_date:   "2024-07-01"          # exclusive (YYYY-MM-DD)
+
+execution:
+  commission: 0.05                  # PINNED: matches .pine commission_value (0.05%)
+  slippage:   0.0                   # PINNED: off for parity determinism
+  spread:     0.0                   # PINNED: no synthetic spread
+
+tick_synthesis:
+  generator: uniform
+  n_ticks_min: 8
+  n_ticks_max: 256
+  seed: 42                          # deterministic seed (C7 contract)
+
+reporting:
+  out_dir: null                     # null -> reports/<strategy>_<UTC ts>/
+  dump_ticks: 0
+
+logging:
+  level: INFO

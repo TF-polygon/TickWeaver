@@ -335,6 +335,32 @@ CCXT OHLCV download
 - Current data source is **CCXT only** (D10). External OHLCV loaders
   (CSV / Binance ZIP) are frozen as future work.
 
+## Validation: cross-checked against TradingView
+
+TickWeaver's engine has been cross-checked against TradingView's PineScript backtester on the same OKX `BTCUSDT.P` 1h data (~5 months, 0% commission):
+
+| Strategy | Trades (TW vs TV) | Agreement | Residual cause |
+|---|---|---|---|
+| EMA cross (bar-close signal) | 65 vs 66 (±1) | return within 0.30%p | EMA warmup seeding |
+| SuperTrend (intra-bar SL/TP) | 40 vs 40 | final equity within ~1% | synthesized intra-bar tick path |
+
+Aggregate metrics agree within ~1% of account value and ±1 trade. Residual differences trace to **known, documented causes** — indicator warmup seeding and TickWeaver's synthesized intra-bar tick path (an *intentional* enhancement over naive OHLC fills, not a discrepancy). A bar-resolution mode (the `ohlc` tick generator) reproduces TradingView's OHLC fill model to within **0.82%** of final equity.
+
+### Quantitative similarity to TradingView
+
+Per-metric agreement, defined as `100% × (1 − |TickWeaver − TradingView| / |TradingView|)`:
+
+| Metric | EMA Cross | SuperTrend |
+|---|---:|---:|
+| Trade count | 65 vs 66 → **98.5%** | 40 vs 40 → **100%** |
+| Final account value | 9,800.23 vs 9,830.02 → **99.7%** | 10,473.09 vs 10,596.60 → **98.8%** |
+| Win rate | 23.08% vs 24.24% → **95.2%** | 57.5% vs 57.5% → **100%** |
+| Profit factor | 0.733 vs 0.827 → **88.6%** | 1.752 vs 1.699 → **96.9%** |
+
+**~99% agreement on final account value** (EMA 99.7%, SuperTrend 98.8% — the bar-resolution `ohlc` mode raises SuperTrend to **99.2%**), with trade count exact (SuperTrend) or within one (EMA) and win rate matched exactly on SuperTrend. EMA Cross is a near-breakeven strategy, so its ratio metrics (win rate, profit factor) are more sensitive to a single-trade difference — final account value is the most representative similarity measure.
+
+This is a focused validation (two strategies, one dataset), not a universal guarantee. Full method, configs, PineScript, and reproducible results are in [`parity/`](parity/) (see [`parity/GUIDELINE.md`](parity/GUIDELINE.md) and [`parity/RESULTS.md`](parity/RESULTS.md)).
+
 ## Locked decisions (excerpt)
 
 | ID | Decision |

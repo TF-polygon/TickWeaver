@@ -1,0 +1,42 @@
+# parity_supertrend_okx.yaml — parity config matching the user's TradingView
+# SuperTrend run (parity/pine/supertrend.pine on OKX BTCUSDT.P 1h).
+#
+# PINNED-FOR-PARITY (must match the TradingView run):
+#   run.initial_capital : 10000.0  == TradingView initial capital
+#   execution.commission: 0.0      == TradingView 0% (CSV Net PnL == gross PnL)
+#   execution.slippage  : 0.0
+#   data.* == the OKX 1h chart window (~2026-01-01 onward)
+#
+# SuperTrend is Pattern-2 (intra-bar SL/TP on synthesized ticks), so the tick
+# synthesis (seed 42, uniform) IS material here — this is exactly where the
+# synthetic tick path vs TradingView's OHLC worst-case assumption can diverge.
+
+run:
+  initial_capital: 10000.0
+  mode: futures                     # SuperTrend takes short entries → swap OHLCV
+  leverage: 1.0
+
+data:
+  exchange: okx
+  symbol: "BTC/USDT:USDT"
+  timeframe: "1h"
+  start_date: "2026-01-01"
+  end_date:   "2026-06-04"
+
+execution:
+  commission: 0.0                   # PINNED: TradingView run used 0% commission
+  slippage:   0.0
+  spread:     0.0
+
+tick_synthesis:
+  generator: uniform
+  n_ticks_min: 8
+  n_ticks_max: 256
+  seed: 42                          # deterministic intra-bar path (C7)
+
+reporting:
+  out_dir: null
+  dump_ticks: 0
+
+logging:
+  level: INFO

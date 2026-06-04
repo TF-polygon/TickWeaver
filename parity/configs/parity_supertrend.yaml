@@ -1,0 +1,51 @@
+# parity_supertrend.yaml — TradingView parity config for strategies/supertrend.py.
+#
+# Copied from configs/futures.yaml (SuperTrend opens SHORTS, so futures mode is
+# required), then PINNED for deterministic, reproducible comparison against
+# parity/pine/supertrend.pine. Every pinned value below must match the
+# corresponding `strategy(...)` argument in the .pine file.
+#
+# PINNED-FOR-PARITY values (do not change one side without the other):
+#   run.initial_capital : 10000.0  == .pine initial_capital=10000
+#   run.leverage        : 1.0      == .pine has no leverage (1x notional); avoids
+#                                     a sizing divergence vs percent_of_equity
+#   execution.commission: 0.05     == .pine commission_value=0.05 (0.05% per side)
+#   execution.slippage  : 0.0      == .pine slippage=0  (off, removes a random
+#                                     divergence source between the two engines)
+#   execution.spread    : 0.0      == no synthetic spread (Pine has none)
+#   tick_synthesis      : uniform / seed 42 / 8..256 ticks — defines the
+#                         synthetic intrabar path TickWeaver uses for SL/TP. This
+#                         is the HEADLINE divergence vs Pine's OHLC fill path
+#                         (see supertrend.pine divergence catalog #1).
+#
+# Cost fields use PERCENT units: 0.05 means 0.05%, NOT 5%.
+
+run:
+  initial_capital: 10000.0          # PINNED: matches .pine initial_capital
+  mode: futures                     # PINNED: SuperTrend takes short entries
+  leverage: 1.0                     # PINNED: 1x notional (Pine has no leverage)
+
+data:
+  exchange: binance
+  symbol: "BTC/USDT:USDT"
+  timeframe: "1h"
+  start_date: "2024-01-01"          # inclusive (YYYY-MM-DD)
+  end_date:   "2024-07-01"          # exclusive (YYYY-MM-DD)
+
+execution:
+  commission: 0.05                  # PINNED: matches .pine commission_value (0.05%)
+  slippage:   0.0                   # PINNED: off for parity determinism
+  spread:     0.0                   # PINNED: no synthetic spread
+
+tick_synthesis:
+  generator: uniform                # PINNED: uniform intrabar tick path
+  n_ticks_min: 8                    # PINNED: synthesized ticks per bar (random in [min, max])
+  n_ticks_max: 256
+  seed: 42                          # PINNED: deterministic seed (C7 contract)
+
+reporting:
+  out_dir: null                     # null -> reports/<strategy>_<UTC ts>/
+  dump_ticks: 0
+
+logging:
+  level: INFO

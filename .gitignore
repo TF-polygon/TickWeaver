@@ -56,3 +56,12 @@ vulture_diag.log
 goals/
 positions_history/
 runs/
+
+# agent / team local state (Claude Code teams, tasks, worktrees)
+.claude/
+
+# parity: real TradingView exports dropped into reference/ are user data — keep
+# only the committed *.sample.csv fixtures. (The evidence CSVs backing
+# parity/RESULTS.md live in parity/ root and ARE committed.)
+parity/reference/*.csv
+!parity/reference/*.sample.csv

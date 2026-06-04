@@ -12,7 +12,7 @@ from tickweaver.tick_synthesis.generator import (
 from tickweaver.tick_synthesis.validator import validate_ticks
 
 # Registration triggers — side-effect imports
-from tickweaver.tick_synthesis.strategies import bridge, uniform  # noqa: F401
+from tickweaver.tick_synthesis.strategies import bridge, ohlc, uniform  # noqa: F401
 
 __all__ = [
     "get_tick_generator",

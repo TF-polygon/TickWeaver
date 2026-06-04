@@ -1,0 +1,42 @@
+# parity_supertrend_ohlc.yaml — SuperTrend on the OHLC (bar-resolution) fill
+# model, for direct comparison with TradingView's default broker emulator.
+#
+# Identical to parity_supertrend_okx.yaml EXCEPT tick_synthesis: instead of a
+# random synthesized intra-bar path, the `ohlc` generator emits the 4 OHLC
+# corners in TradingView's documented order (O->H->L->C or O->L->H->C). This
+# makes TickWeaver fill against the same bar-resolution assumption TradingView
+# uses on historical bars.
+#
+# Compare three runs to decompose the divergence:
+#   TickWeaver(ohlc)    vs TradingView  -> bar-resolution parity (engine + OHLC model)
+#   TickWeaver(uniform) vs TradingView  -> adds the synthesized tick-path effect
+
+run:
+  initial_capital: 10000.0
+  mode: futures
+  leverage: 1.0
+
+data:
+  exchange: okx
+  symbol: "BTC/USDT:USDT"
+  timeframe: "1h"
+  start_date: "2026-01-01"
+  end_date:   "2026-06-04"
+
+execution:
+  commission: 0.0
+  slippage:   0.0
+  spread:     0.0
+
+tick_synthesis:
+  generator: ohlc                   # bar-resolution OHLC path (TradingView model)
+  n_ticks_min: 4                    # ohlc generator emits exactly the 4 corners
+  n_ticks_max: 4
+  seed: 42                          # unused by ohlc (deterministic) but kept
+
+reporting:
+  out_dir: null
+  dump_ticks: 0
+
+logging:
+  level: INFO

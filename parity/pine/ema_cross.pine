@@ -1,0 +1,81 @@
+//@version=5
+// =============================================================================
+// ema_cross.pine — TradingView (PineScript v5) parity reference for TickWeaver.
+//
+// Mirrors: test_strategy/ema_cross.py  (EMA_FAST=12, EMA_SLOW=26, SIZE_PCT=0.2,
+//          long-only: market_buy on fast/slow crossover when flat, close on
+//          crossunder).
+// Config:  parity/configs/parity_ema.yaml  (initial_capital=10000,
+//          commission=0.05% per side, slippage=0).
+//
+// HOW TO RUN (the data MUST match TickWeaver or results are not comparable):
+//   1. Chart symbol:  BINANCE:BTCUSDT.P     (USDT-M perpetual — NOT spot BTCUSDT)
+//   2. Timeframe:     1h
+//   3. Paste into Pine Editor -> "Add to chart".
+//   4. The Start/End inputs below pin the parity window to
+//        2024-01-01 00:00 -> 2024-07-01 00:00 UTC (end exclusive),
+//      matching parity_ema.yaml start_date/end_date.
+//   5. Strategy Tester -> export "List of Trades" CSV and "Performance Summary" CSV.
+//
+// KNOWN DIVERGENCE SOURCES (why TW and TV may differ within medium tolerance —
+//   aggregate metrics <=5%, trade count exact +-1):
+//   1. EMA warmup seeding. TickWeaver's EMA (src/tickweaver/strategy/
+//      indicators.py) seeds with the SMA of the first `period` closes, then
+//      alpha-smooths. Pine `ta.ema` warms tick-by-tick from the first bar (it
+//      does NOT wait for `period` bars), so early EMA values — and the exact
+//      bar of the first crossover — can differ. Additionally TradingView warms
+//      its EMA on chart history BEFORE 2024-01-01 while TickWeaver warms only
+//      from its data start, so the first in-window signals can shift by a bar.
+//   2. Cash-vs-equity position sizing. TickWeaver sizes from CASH
+//      (api.size_from_cash_pct(0.2, close)); Pine
+//      default_qty_type=strategy.percent_of_equity sizes from EQUITY. While
+//      flat & long-only these coincide (cash≈equity), but rounding/fees create
+//      small qty differences.
+//   3. Fill timing. TickWeaver fills against synthesized intrabar ticks within
+//      the signal bar; Pine (calc_on_every_tick=false,
+//      process_orders_on_close=false) fills market orders at the NEXT bar open.
+//   4. Open position at window end. TickWeaver final_equity is mark-to-market;
+//      TradingView "Net Profit" is realized (closed trades only). If a long is
+//      still open at 2024-07-01 the two differ by its unrealized PnL. This
+//      script does NOT force-close at the window end (forcing it would add a
+//      closed trade TickWeaver does not count). Note any open trade when
+//      reading results.
+// =============================================================================
+strategy("TickWeaver Parity — EMA Cross",
+     overlay                 = true,
+     initial_capital         = 10000,
+     currency                = currency.NONE,
+     default_qty_type        = strategy.percent_of_equity,
+     default_qty_value       = 20,
+     commission_type         = strategy.commission.percent,
+     commission_value        = 0.05,
+     slippage                = 0,
+     pyramiding              = 0,
+     process_orders_on_close = false,
+     calc_on_every_tick      = false)
+
+// ── parameters (mirror the module constants in ema_cross.py) ─────────────────
+EMA_FAST = input.int(12, "Fast EMA length")
+EMA_SLOW = input.int(26, "Slow EMA length")
+
+// ── parity date window (UTC, end exclusive — matches TickWeaver start/end) ───
+useDateFilter = input.bool(true, "Limit trading to parity window")
+startTime     = input.time(timestamp("2024-01-01 00:00 +0000"), "Start (UTC, inclusive)")
+endTime       = input.time(timestamp("2024-07-01 00:00 +0000"), "End (UTC, exclusive)")
+inWindow = not useDateFilter or (time >= startTime and time < endTime)
+
+// ── indicators ───────────────────────────────────────────────────────────────
+fast = ta.ema(close, EMA_FAST)
+slow = ta.ema(close, EMA_SLOW)
+plot(fast, "EMA fast", color = color.aqua)
+plot(slow, "EMA slow", color = color.orange)
+
+crossUp   = ta.crossover(fast, slow)    // diff[1] <= 0 and diff > 0
+crossDown = ta.crossunder(fast, slow)   // diff[1] >= 0 and diff < 0
+
+// ── trading logic (enter when flat, close when long) ─────────────────────────
+if inWindow
+    if crossUp and strategy.position_size == 0
+        strategy.entry("long", strategy.long)
+    else if crossDown and strategy.position_size > 0
+        strategy.close("long")

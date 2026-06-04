@@ -1,0 +1,7 @@
+Trade #,Type,Date/Time,Price USDT,Contracts,Profit USDT,Profit %,Cumulative profit USDT,Cumulative profit %
+1,Entry long,2024-01-15 08:00,42500.00,0.047,,,,
+1,Exit long,2024-01-20 14:00,43800.00,0.047,61.10,1.44%,61.10,0.61%
+2,Entry long,2024-02-03 10:00,43200.00,0.046,,,,
+2,Exit long,2024-02-08 16:00,42100.00,0.046,-50.60,-1.17%,10.50,0.10%
+3,Entry long,2024-02-21 06:00,51200.00,0.039,,,,
+3,Exit long,2024-03-01 12:00,53400.00,0.039,85.80,1.68%,96.30,0.96%

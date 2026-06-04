@@ -201,8 +201,11 @@ class CcxtLoader:
             cursor_ms = last_ms + tf_ms
             if until_ms is not None and cursor_ms >= until_ms:
                 break
-            if len(batch) < limit:
-                break
+            # NOTE: do NOT stop on `len(batch) < limit`. Some exchanges (e.g. OKX)
+            # cap a single fetch_ohlcv call well below `limit` (300/call), so a
+            # short batch does not mean "no more data". Termination is handled by
+            # the empty-batch (above), non-advancing-cursor (above), until_ms, and
+            # max_iters guards instead.
             time.sleep(self.rate_limit_sleep)
 
         if not rows:

@@ -56,7 +56,7 @@ class ExecutionSection(BaseModel):
 
 
 class TickSynthesisSection(BaseModel):
-    generator: Literal["uniform", "bridge"] = "uniform"
+    generator: Literal["uniform", "bridge", "ohlc"] = "uniform"
     n_ticks_min: int = 8
     n_ticks_max: int = 256
     seed: int = 42
