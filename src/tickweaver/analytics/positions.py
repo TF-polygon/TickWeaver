@@ -101,6 +101,90 @@ def build_position_history(
             return None
         return int(bar_timestamps.searchsorted(ts, side="right") - 1)
 
+    def _holding_bars(exit_ts: pd.Timestamp, entry_ts: pd.Timestamp) -> int | None:
+        if bar_timestamps is None:
+            return None
+        return _bar_index(exit_ts) - _bar_index(entry_ts)
+
+    def _close_against(
+        queue: list[dict],
+        ts: pd.Timestamp,
+        price: float,
+        fee_per_unit: float,
+        qty_remaining: float,
+        pnl_sign: float,
+    ) -> float:
+        """FIFO 로 반대 방향 open 큐를 청산하며 Close row 를 emit.
+
+        ``pnl_sign``: short 청산(+1) 은 ``(entry - price)``, long 청산(-1) 은
+        ``(price - entry)`` PnL. 매칭 후 남은 qty 를 반환.
+        """
+        nonlocal cum_pnl, cum_fee
+        while qty_remaining > _QTY_EPS and queue:
+            entry = queue[0]
+            matched = min(entry["qty_remaining"], qty_remaining)
+            pnl = pnl_sign * (entry["price"] - price) * matched
+            cum_pnl += pnl
+            close_fee = fee_per_unit * matched
+            cum_fee += close_fee
+            rows.append(
+                PositionRow(
+                    timestamp=ts,
+                    order_no=entry["order_no"],
+                    side="Close",
+                    margin=None,
+                    entry_price=price,
+                    pnl=pnl,
+                    cum_pnl=cum_pnl,
+                    holding_bars=_holding_bars(ts, entry["ts"]),
+                    fee=close_fee,
+                    cum_fee=cum_fee,
+                )
+            )
+            entry["qty_remaining"] -= matched
+            qty_remaining -= matched
+            if entry["qty_remaining"] <= _QTY_EPS:
+                queue.pop(0)
+        return qty_remaining
+
+    def _open_position(
+        queue: list[dict],
+        ts: pd.Timestamp,
+        price: float,
+        fee_per_unit: float,
+        qty: float,
+        side_label: str,
+    ) -> None:
+        """새 진입 row 를 emit 하고 open 큐에 항목 추가."""
+        nonlocal next_order_no, cum_fee
+        order_no = next_order_no
+        next_order_no += 1
+        margin = price * qty / leverage
+        open_fee = fee_per_unit * qty
+        cum_fee += open_fee
+        rows.append(
+            PositionRow(
+                timestamp=ts,
+                order_no=order_no,
+                side=side_label,
+                margin=margin,
+                entry_price=price,
+                pnl=None,
+                cum_pnl=None,
+                holding_bars=None,
+                fee=open_fee,
+                cum_fee=cum_fee,
+            )
+        )
+        queue.append(
+            {
+                "order_no": order_no,
+                "ts": ts,
+                "price": price,
+                "qty_remaining": qty,
+            }
+        )
+
     for fill in fills:
         side = fill.side.value if hasattr(fill.side, "value") else str(fill.side)
         qty_remaining = float(fill.qty)
@@ -112,124 +196,20 @@ def build_position_history(
 
         if side == "buy":
             # Close shorts FIFO 먼저, 잔여는 새 long 으로.
-            while qty_remaining > _QTY_EPS and open_shorts:
-                s = open_shorts[0]
-                matched = min(s["qty_remaining"], qty_remaining)
-                pnl = (s["price"] - price) * matched   # short PnL 부호 반전
-                cum_pnl += pnl
-                close_fee = fee_per_unit * matched
-                cum_fee += close_fee
-                hb = (
-                    None
-                    if bar_timestamps is None
-                    else _bar_index(ts) - _bar_index(s["ts"])
-                )
-                rows.append(
-                    PositionRow(
-                        timestamp=ts,
-                        order_no=s["order_no"],
-                        side="Close",
-                        margin=None,
-                        entry_price=price,
-                        pnl=pnl,
-                        cum_pnl=cum_pnl,
-                        holding_bars=hb,
-                        fee=close_fee,
-                        cum_fee=cum_fee,
-                    )
-                )
-                s["qty_remaining"] -= matched
-                qty_remaining -= matched
-                if s["qty_remaining"] <= _QTY_EPS:
-                    open_shorts.pop(0)
+            qty_remaining = _close_against(
+                open_shorts, ts, price, fee_per_unit, qty_remaining, pnl_sign=1.0
+            )
             if qty_remaining > _QTY_EPS:
-                # 새 long 진입
-                order_no = next_order_no
-                next_order_no += 1
-                margin = price * qty_remaining / leverage
-                open_fee = fee_per_unit * qty_remaining
-                cum_fee += open_fee
-                rows.append(
-                    PositionRow(
-                        timestamp=ts,
-                        order_no=order_no,
-                        side="Long",
-                        margin=margin,
-                        entry_price=price,
-                        pnl=None,
-                        cum_pnl=None,
-                        holding_bars=None,
-                        fee=open_fee,
-                        cum_fee=cum_fee,
-                    )
-                )
-                open_longs.append(
-                    {
-                        "order_no": order_no,
-                        "ts": ts,
-                        "price": price,
-                        "qty_remaining": qty_remaining,
-                    }
+                _open_position(
+                    open_longs, ts, price, fee_per_unit, qty_remaining, "Long"
                 )
         else:  # sell — mirror
-            while qty_remaining > _QTY_EPS and open_longs:
-                lng = open_longs[0]
-                matched = min(lng["qty_remaining"], qty_remaining)
-                pnl = (price - lng["price"]) * matched   # long PnL
-                cum_pnl += pnl
-                close_fee = fee_per_unit * matched
-                cum_fee += close_fee
-                hb = (
-                    None
-                    if bar_timestamps is None
-                    else _bar_index(ts) - _bar_index(lng["ts"])
-                )
-                rows.append(
-                    PositionRow(
-                        timestamp=ts,
-                        order_no=lng["order_no"],
-                        side="Close",
-                        margin=None,
-                        entry_price=price,
-                        pnl=pnl,
-                        cum_pnl=cum_pnl,
-                        holding_bars=hb,
-                        fee=close_fee,
-                        cum_fee=cum_fee,
-                    )
-                )
-                lng["qty_remaining"] -= matched
-                qty_remaining -= matched
-                if lng["qty_remaining"] <= _QTY_EPS:
-                    open_longs.pop(0)
+            qty_remaining = _close_against(
+                open_longs, ts, price, fee_per_unit, qty_remaining, pnl_sign=-1.0
+            )
             if qty_remaining > _QTY_EPS:
-                # 새 short 진입
-                order_no = next_order_no
-                next_order_no += 1
-                margin = price * qty_remaining / leverage
-                open_fee = fee_per_unit * qty_remaining
-                cum_fee += open_fee
-                rows.append(
-                    PositionRow(
-                        timestamp=ts,
-                        order_no=order_no,
-                        side="Short",
-                        margin=margin,
-                        entry_price=price,
-                        pnl=None,
-                        cum_pnl=None,
-                        holding_bars=None,
-                        fee=open_fee,
-                        cum_fee=cum_fee,
-                    )
-                )
-                open_shorts.append(
-                    {
-                        "order_no": order_no,
-                        "ts": ts,
-                        "price": price,
-                        "qty_remaining": qty_remaining,
-                    }
+                _open_position(
+                    open_shorts, ts, price, fee_per_unit, qty_remaining, "Short"
                 )
 
     return rows
@@ -282,6 +262,71 @@ def build_marker_tooltips(
     cur_side: str | None = None   # 'long' / 'short' / None (FLAT)
     cur_qty: float = 0.0
 
+    def _open_position(side: str, ts: pd.Timestamp, price: float, qty: float) -> None:
+        """``side`` ('long'/'short') 방향 진입 marker emit + 큐/상태 갱신.
+
+        FLAT 진입 · 같은 방향 add · reverse 진입 모두 동일 로직 (reverse 직전엔
+        cur_qty 가 0 이므로 ``cur_qty += qty`` 가 일관되게 동작).
+        """
+        nonlocal next_order_no, cur_side, cur_qty
+        order_no = next_order_no
+        next_order_no += 1
+        margin = price * qty / leverage
+        intent = "open_long" if side == "long" else "open_short"
+        queue = open_longs if side == "long" else open_shorts
+        queue.append({"order_no": order_no, "price": price, "qty": qty})
+        result[intent].append(
+            {
+                "timestamp": ts,
+                "price": price,
+                "intent": intent,
+                "order_no": order_no,
+                "margin": margin,
+            }
+        )
+        cur_side = side
+        cur_qty += qty
+
+    def _close_position(
+        side: str, ts: pd.Timestamp, price: float, qty: float
+    ) -> float:
+        """``side`` 포지션을 FIFO 청산하고 close marker emit.
+
+        포지션을 완전히 닫았을 때 남는 reverse leftover qty 를 반환 (아니면 0).
+        """
+        nonlocal cur_side, cur_qty
+        pnl_sign = 1.0 if side == "short" else -1.0
+        queue = open_longs if side == "long" else open_shorts
+        intent = "close_long" if side == "long" else "close_short"
+        close_qty = min(cur_qty, qty)
+        qty_to_match = close_qty
+        closed_orders: list[int] = []
+        total_pnl = 0.0
+        while qty_to_match > _QTY_EPS and queue:
+            entry = queue[0]
+            matched = min(entry["qty"], qty_to_match)
+            closed_orders.append(entry["order_no"])
+            total_pnl += pnl_sign * (entry["price"] - price) * matched
+            entry["qty"] -= matched
+            qty_to_match -= matched
+            if entry["qty"] <= _QTY_EPS:
+                queue.pop(0)
+        result[intent].append(
+            {
+                "timestamp": ts,
+                "price": price,
+                "intent": intent,
+                "closed_orders": closed_orders,
+                "pnl": total_pnl,
+            }
+        )
+        cur_qty -= close_qty
+        if cur_qty <= _QTY_EPS:
+            cur_side = None
+            cur_qty = 0.0
+            return qty - close_qty
+        return 0.0
+
     for fill in fills:
         side_value = (
             fill.side.value if hasattr(fill.side, "value") else str(fill.side)
@@ -292,165 +337,26 @@ def build_marker_tooltips(
 
         if cur_side is None:
             # FLAT → 새 open
-            order_no = next_order_no
-            next_order_no += 1
-            margin = price * qty / leverage
-            entry = {
-                "timestamp": ts,
-                "price": price,
-                "intent": "open_long" if side_value == "buy" else "open_short",
-                "order_no": order_no,
-                "margin": margin,
-            }
-            if side_value == "buy":
-                cur_side = "long"
-                cur_qty = qty
-                open_longs.append(
-                    {"order_no": order_no, "price": price, "qty": qty}
-                )
-                result["open_long"].append(entry)
-            else:
-                cur_side = "short"
-                cur_qty = qty
-                open_shorts.append(
-                    {"order_no": order_no, "price": price, "qty": qty}
-                )
-                result["open_short"].append(entry)
+            _open_position("long" if side_value == "buy" else "short", ts, price, qty)
             continue
 
         if cur_side == "long":
             if side_value == "buy":
                 # Same-side add
-                order_no = next_order_no
-                next_order_no += 1
-                margin = price * qty / leverage
-                cur_qty += qty
-                open_longs.append(
-                    {"order_no": order_no, "price": price, "qty": qty}
-                )
-                result["open_long"].append(
-                    {
-                        "timestamp": ts,
-                        "price": price,
-                        "intent": "open_long",
-                        "order_no": order_no,
-                        "margin": margin,
-                    }
-                )
+                _open_position("long", ts, price, qty)
             else:
                 # SELL while LONG: close (+ possibly reverse to short)
-                close_qty = min(cur_qty, qty)
-                # FIFO match
-                qty_to_match = close_qty
-                closed_orders: list[int] = []
-                total_pnl = 0.0
-                while qty_to_match > _QTY_EPS and open_longs:
-                    lng = open_longs[0]
-                    matched = min(lng["qty"], qty_to_match)
-                    closed_orders.append(lng["order_no"])
-                    total_pnl += (price - lng["price"]) * matched
-                    lng["qty"] -= matched
-                    qty_to_match -= matched
-                    if lng["qty"] <= _QTY_EPS:
-                        open_longs.pop(0)
-                result["close_long"].append(
-                    {
-                        "timestamp": ts,
-                        "price": price,
-                        "intent": "close_long",
-                        "closed_orders": closed_orders,
-                        "pnl": total_pnl,
-                    }
-                )
-                cur_qty -= close_qty
-                if cur_qty <= _QTY_EPS:
-                    cur_side = None
-                    cur_qty = 0.0
-                    leftover = qty - close_qty
-                    if leftover > _QTY_EPS:
-                        # Reverse: open short with leftover
-                        order_no = next_order_no
-                        next_order_no += 1
-                        margin = price * leftover / leverage
-                        cur_side = "short"
-                        cur_qty = leftover
-                        open_shorts.append(
-                            {"order_no": order_no, "price": price, "qty": leftover}
-                        )
-                        result["open_short"].append(
-                            {
-                                "timestamp": ts,
-                                "price": price,
-                                "intent": "open_short",
-                                "order_no": order_no,
-                                "margin": margin,
-                            }
-                        )
+                leftover = _close_position("long", ts, price, qty)
+                if leftover > _QTY_EPS:
+                    _open_position("short", ts, price, leftover)
         else:  # cur_side == "short"
             if side_value == "sell":
                 # Same-side add
-                order_no = next_order_no
-                next_order_no += 1
-                margin = price * qty / leverage
-                cur_qty += qty
-                open_shorts.append(
-                    {"order_no": order_no, "price": price, "qty": qty}
-                )
-                result["open_short"].append(
-                    {
-                        "timestamp": ts,
-                        "price": price,
-                        "intent": "open_short",
-                        "order_no": order_no,
-                        "margin": margin,
-                    }
-                )
+                _open_position("short", ts, price, qty)
             else:
                 # BUY while SHORT: close (+ possibly reverse to long)
-                close_qty = min(cur_qty, qty)
-                qty_to_match = close_qty
-                closed_orders = []
-                total_pnl = 0.0
-                while qty_to_match > _QTY_EPS and open_shorts:
-                    s = open_shorts[0]
-                    matched = min(s["qty"], qty_to_match)
-                    closed_orders.append(s["order_no"])
-                    total_pnl += (s["price"] - price) * matched
-                    s["qty"] -= matched
-                    qty_to_match -= matched
-                    if s["qty"] <= _QTY_EPS:
-                        open_shorts.pop(0)
-                result["close_short"].append(
-                    {
-                        "timestamp": ts,
-                        "price": price,
-                        "intent": "close_short",
-                        "closed_orders": closed_orders,
-                        "pnl": total_pnl,
-                    }
-                )
-                cur_qty -= close_qty
-                if cur_qty <= _QTY_EPS:
-                    cur_side = None
-                    cur_qty = 0.0
-                    leftover = qty - close_qty
-                    if leftover > _QTY_EPS:
-                        order_no = next_order_no
-                        next_order_no += 1
-                        margin = price * leftover / leverage
-                        cur_side = "long"
-                        cur_qty = leftover
-                        open_longs.append(
-                            {"order_no": order_no, "price": price, "qty": leftover}
-                        )
-                        result["open_long"].append(
-                            {
-                                "timestamp": ts,
-                                "price": price,
-                                "intent": "open_long",
-                                "order_no": order_no,
-                                "margin": margin,
-                            }
-                        )
+                leftover = _close_position("short", ts, price, qty)
+                if leftover > _QTY_EPS:
+                    _open_position("long", ts, price, leftover)
 
     return result
