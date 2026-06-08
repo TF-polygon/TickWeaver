@@ -68,33 +68,35 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 ## What you get
 
-- **Ten built-in streaming indicators**: `SMA`, `EMA`, `RSI`, `ATR`,
-  `SuperTrend`, `MACD`, `BollingerBands`, `Stochastic`, `Pivot`, `HARSI`.
-  Common contract: `update / value / is_warm / reset`.
-  Count-based (gap-safe), deterministic.
-- **All four major order types**: `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`.
-  LIMIT fills as maker (no slippage). STOP triggers as taker. Lookahead
-  protection: an order submitted in `on_bar` fills from the FIRST tick of
-  the NEXT bar.
-- **Two synthesis algorithms**: `uniform` (default, conservative) and
-  `bridge` (log-space Brownian bridge, more natural intra-bar paths).
-  Direct comparison is isolated to `compare_runs.py` only.
-- **HTML report** per run: metrics, equity curve + drawdown, trades table,
-  and a "Tick Synthesis (proof)" section showing seed and per-bar statistics.
-- **Live `tqdm` progress** with rolling equity update; auto-disabled in
-  non-tty (e.g. pytest, CI).
-- **Strategy authoring**: a single `.py` file. Trading parameters are
-  module constants inside the .py. The engine injects `api` and `context`
-  into module globals. No json side-files — the yaml config under
-  `configs/` defines the environment, the .py defines the strategy.
-- **Optional chart visualization**: `--viz` opens a finplot window with
-  candles, fill markers, trade pair lines, indicator sub-panels, and a
-  docked position-history table (with per-cycle fees + CSV export). Price
-  precision is derived per symbol from CCXT market info. Post-hoc only —
-  does not affect backtest determinism.
-- **Fill diagnostic tool**: `scripts/diagnose_fills.py` reports whether
-  each fill landed at a bar boundary or inside a wick, so you can verify
-  empirically that synthesized ticks are being exercised.
+| Feature | What it is |
+|---------|------------|
+| **Ten built-in streaming indicators** | `SMA`, `EMA`, `RSI`, `ATR`, `SuperTrend`, `MACD`, `BollingerBands`, `Stochastic`, `Pivot`, `HARSI` — one common contract, count-based and deterministic |
+| **All four major order types** | `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`, with lookahead protection |
+| **Two synthesis algorithms** | `uniform` (default) and `bridge` (Brownian bridge) for intra-bar tick paths |
+| **HTML report per run** | metrics, equity curve + drawdown, trades table, and a tick-synthesis proof section |
+| **Live `tqdm` progress** | rolling equity update; auto-disabled in non-tty (pytest, CI) |
+| **Single-file strategy authoring** | one `.py` file with module-constant parameters; no json side-files |
+| **Optional chart visualization** | `--viz` finplot window with candles, fills, indicators, and a position table |
+| **Fill diagnostic tool** | `scripts/diagnose_fills.py` confirms ticks fill inside wicks, not just at bar boundaries |
+
+**Details**
+
+- **Indicators** share a `update / value / is_warm / reset` contract and are
+  count-based (gap-safe), so they stay deterministic across runs.
+- **Order types**: LIMIT fills as maker (no slippage), STOP triggers as taker.
+  Lookahead protection means an order submitted in `on_bar` fills from the
+  FIRST tick of the NEXT bar.
+- **Synthesis**: `uniform` is conservative; `bridge` uses a log-space Brownian
+  bridge for more natural intra-bar paths. Direct comparison is isolated to
+  `compare_runs.py` only.
+- **HTML report**'s "Tick Synthesis (proof)" section shows the seed and per-bar
+  statistics so the synthesized path is auditable.
+- **Strategy authoring**: trading parameters are module constants inside the
+  `.py`. The engine injects `api` and `context` into module globals. The yaml
+  config under `configs/` defines the environment; the `.py` defines the strategy.
+- **Visualization**: the docked position-history table includes per-cycle fees
+  and CSV export; price precision is derived per symbol from CCXT market info.
+  Post-hoc only — does not affect backtest determinism.
 
 ## Strategy file example
 
@@ -153,35 +155,33 @@ API dictionary (signatures, types, patterns, pitfalls).
 
 ## Strategy patterns
 
-TickWeaver strategies are file-based modules with five optional lifecycle
-hooks: `on_init`, `on_bar`, `on_tick`, `on_fill`, `on_deinit`. The engine
-calls each only if defined. Two patterns cover most use cases:
+A strategy is a file-based module with five optional lifecycle hooks —
+`on_init`, `on_bar`, `on_tick`, `on_fill`, `on_deinit` — and the engine calls
+each only if you define it. Two patterns cover most use cases.
 
-### Pattern 1 — `on_bar` only (signal on bar close)
+### Pattern 1 — signal on bar close (`on_bar` only)
 
-Traditional indicator-based strategies where signals are evaluated when
-each bar closes. Indicators update on `bar.close`, just like a live bot
-that polls closed candles. Orders submitted in `on_bar` fill from the
-first tick of the next bar, so every fill lands at a bar boundary.
+- **Use for** — traditional indicator strategies evaluated on closed candles
+- **Entry / exit** — both decided on `bar.close`, like a live bot polling
+  closed candles
+- **Fills** — always at a bar boundary (orders fill from the first tick of the
+  next bar)
+- **Example** — enter when RSI < 30, exit when RSI > 70
 
-For example, an RSI strategy that enters when RSI < 30 and exits when
-RSI > 70 — signal computed on bar close, fills at the next bar boundary.
+### Pattern 2 — entry on close, exit on tick (`on_bar` + `on_tick`) · *recommended for SL/TP*
 
-### Pattern 2 — `on_bar` entry + `on_tick` exit (recommended for SL/TP)
+- **Use for** — stop-loss / take-profit, trailing stops, anything
+  price-reactive intra-bar
+- **Entry** — decided on `bar.close`
+- **Exit** — evaluated on **every synthesized tick**, so it fires inside the
+  wick at the price actually reached
+- **Example** — the bundled `supertrend`: SuperTrend-flip entry, swing
+  stop-loss + 1.5R take-profit
 
-Entry signal is decided on bar close; SL/TP are evaluated on **every
-synthesized tick**, so exits can fire inside a bar's wick at the actual
-price the wick reached — not at bar close. This is where the synthesized
-tick path earns its keep.
-
-The bundled `supertrend` strategy is exactly this: a SuperTrend-flip entry
-decided on bar close, with a swing-based stop-loss and 1.5R take-profit
-evaluated on every synthesized tick — the exit fires inside the wick at the
-price the wick actually reached.
-
-The diagnostic script below shows the difference empirically: Pattern-1
-records 0% inside-wick fills, while Pattern-2 records a meaningful share
-of fills landing throughout the wick.
+> **Empirical difference** — `scripts/diagnose_fills.py` records **0%**
+> inside-wick fills for Pattern 1, but a meaningful share landing throughout
+> the wick for Pattern 2. This is where the synthesized tick path earns its
+> keep.
 
 ## Visualization (optional)
 
@@ -284,15 +284,17 @@ Example summary output:
   fill_px strictly inside wick        : 103/276  ( 37.3%)
 ```
 
-Pattern-1 strategies show 100% boundary fills — the synthesizer runs every
-bar but the strategy has no way to consult sub-bar prices. Pattern-2
-strategies show a meaningful `inside_wick` share — that percentage is the
-synthesized tick path doing visible work in your fills.
+**How to read it**
 
-Raw fill data is written to `reports/<strategy>_<UTC ts>/fills.csv` with
-nanosecond-precision timestamps preserved, so you can also open it in
-Excel or pandas to inspect exactly when in a 1-hour bar a tick-level exit
-was triggered.
+- **The line that matters** — `strictly inside wick`: a non-zero share means
+  exits fired at sub-bar prices that only the synthesized tick path reached.
+- **Pattern 1** — 100% boundary fills, 0% inside wick. The synthesizer still
+  runs every bar, but the strategy never consults sub-bar prices.
+- **Pattern 2** — a meaningful inside-wick share. That percentage is the tick
+  path doing visible work in your fills.
+- **Raw data** — `reports/<strategy>_<UTC ts>/fills.csv` keeps
+  nanosecond-precision timestamps, so you can open it in Excel or pandas to
+  inspect exactly when in a 1-hour bar a tick-level exit fired.
 
 ## Architecture (current scope)
 
