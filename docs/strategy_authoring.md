@@ -269,7 +269,7 @@ def on_init():
 ```
 
 - `--viz` 가 꺼져 있으면 모든 viz 호출은 noop이므로 production 코드에 그대로 두어도 안전.
-- Indicator 클래스는 `PANEL`(필수, str) + `SUBVALUES`(`None` 또는 tuple) 메타데이터를 가져야 함. 기본 10종 (`SMA` / `EMA` / `RSI` / `ATR` / `SuperTrend` / `MACD` / `BollingerBands` / `Stochastic` / `Pivot` / `HARSI`) 은 이미 정의됨.
+- Indicator 클래스는 `PANEL`(필수, str) + `SUBVALUES`(`None` 또는 tuple) 메타데이터를 가져야 함. 기본 11종 (`SMA` / `EMA` / `RSI` / `ATR` / `ADX` / `SuperTrend` / `MACD` / `BollingerBands` / `Stochastic` / `Pivot` / `HARSI`) 은 이미 정의됨.
 - 커스텀 indicator 작성, multi-value 분해 (BB / MACD), style override (`color=`/`width=`), 외부 계산값 fallback (`api.plot(name, value)`) — 자세한 계약과 함정 체크리스트는 [`strategies/_reference.md` §9](../strategies/_reference.md#9-지표-시각화---viz) 참고.
 
 ---

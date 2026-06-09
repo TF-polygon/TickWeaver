@@ -36,6 +36,8 @@ strategies/
 ├── _reference.md      <- this document (Korean)
 ├── _reference_en.md   <- this document (English)
 ├── README.md
+├── supertrend.py      <- bundled example (Pattern 2)
+├── goldrun.py         <- bundled example
 └── my_alpha.py        <- your strategy
 ```
 
@@ -77,9 +79,9 @@ def on_init():
     trade_count = 0
 ```
 
-Right before `on_init` is called, the engine injects `api` and `context`
-into the module globals. From that point on, any hook can call
-`api.market_buy(...)` without imports.
+Right before `on_init` is called, the engine injects `api`, `context`, and the
+enums (`Side` / `OrderType` / `PositionSide`) into the module globals. From that
+point on, any hook can call `api.market_buy(...)` without imports.
 
 Trading parameters belong at the top of the file as module constants:
 
@@ -270,10 +272,11 @@ globals. No import is needed; any hook can use them directly.
 | Name | Type | Role |
 |---|---|---|
 | `api` | `StrategyAPI` | Single gateway for orders / positions / account (§3) |
-| `context` | `StrategyContext` | Current bar index / symbol / timeframe metadata |
+| `context` | `StrategyContext` | Current bar index / symbol / timeframe metadata (§5.7) |
+| `Side` / `OrderType` / `PositionSide` | `Enum` | Convenience enums |
 
-For convenience, the engine also injects the enum types: `Side`,
-`OrderType`, `PositionSide`.
+> **There is no `params`.** Trading parameters are module constants (§4); the
+> `<strategy>.json` pairing file no longer exists.
 
 `context` is rarely accessed directly -- `bar` already carries timestamp
 and symbol. Use `context.symbol`, `context.timeframe` only when extra
@@ -288,8 +291,11 @@ metadata is needed.
 > signal may have the second call rejected. Stick to "one signal = one
 > call".
 >
-> All order methods return `order_id (str)`. Only `cancel()` returns `bool`.
-> All `qty` arguments are auto-rounded via `round_qty()` inside the broker.
+> Order methods return `order_id (str)`; `cancel()` returns `bool`,
+> `close_position()` returns `str | None`, `close_all()` returns `list[str]`.
+> All `qty` arguments are auto-rounded via `round_qty()`; if the rounded qty is
+> ≤ 0 the order is **not** submitted and an empty string `""` is returned with a
+> `zero_qty_order` warning (no exception).
 
 ### 3.1 Order methods
 
@@ -307,6 +313,9 @@ metadata is needed.
 
 Fees are applied to every fill via the `commission` rate in config.
 Slippage applies only to rows marked "Applied" via the `slippage` rate.
+**Opening a short from FLAT (`market_sell` / `limit_sell` / `stop_sell`) is only
+allowed under `mode: futures`** -- in spot mode it raises
+`SpotShortNotAllowedError` (§7.8).
 
 ```python
 api.market_buy(0.05)
@@ -333,16 +342,20 @@ api.stop_sell(pos.qty, pos.entry_price * 0.99)      # -1% stop-loss STOP
 | `api.is_flat()` | method | `bool` | Convenience for `api.position().side == PositionSide.FLAT` |
 | `api.cash` | property | `float` | Current cash balance |
 | `api.equity` | property | `float` | `cash + unrealized PnL` |
+| `api.leverage` | property | `float` | `run.leverage` from config (1.0 in spot). Typically used as a qty multiplier: `qty = notional * api.leverage / price`. Broker accounting is leverage-agnostic -- cash is debited at full notional (margin semantics not yet implemented) |
 
 ---
 
-### 3.4 Helper methods
+### 3.4 Helper / logging / chart methods
 
 | Method | Parameters | Returns | Use |
 |---|---|---|---|
 | `api.round_qty(qty)` | `qty: float` | `float` | Rounds down to exchange step size. Order methods already call this; use directly when verifying your own sizing math |
-| `api.size_from_cash_pct(pct, price)` | `pct: float (0~1)`, `price: float` | `float` | `cash * pct / price` after `round_qty()`. Lets sizing auto-scale with the equity curve |
-| `api.log(event, **kwargs)` | `event: str`, arbitrary `**kwargs` | `None` | Console logger. Output format: `<ts> [info] [<component>] <event>  key=value ...`. Silenced in progress mode (use `--no-progress` to see). Not included in `report.html` |
+| `api.size_from_cash_pct(pct, price)` | `pct: float (0~1)`, `price: float` | `float` | `cash * pct / price` after `round_qty()`. Lets sizing auto-scale with the equity curve (`0.0` when `price <= 0`) |
+| `api.log(event, **kwargs)` | `event: str`, arbitrary `**kwargs` | `None` | Console logger. Silenced in progress mode (use `--no-progress` to see). Not included in `report.html` |
+| `api.comment(text)` | `text: str` | `None` | MT4 `Comment()` equivalent (D21). Shows `text` in the top-left chart label under `--viz` (`\n` for line breaks, empty string clears). No-op when viz is off |
+| `api.bind_indicator(name, indicator, panel=None, **style)` | §9.1 | `None` | Register a streaming indicator for the chart (no-op when viz off, idempotent). See §9 |
+| `api.plot(name, value, panel="price", **style)` | §9.6 | `None` | Emit an externally computed value as a chart line (no-op when viz off). See §9.6 |
 
 ```python
 qty = api.size_from_cash_pct(0.1, bar.close)   # 10% of cash
@@ -408,6 +421,7 @@ Benefits over a json side-file:
 | `price` | `float` | Synthesized price |
 | `bar_index` | `int` | Index of the bar this tick belongs to |
 | `tick_index_in_bar` | `int` | Position of this tick inside the bar |
+| `symbol` | `str` | Defaults to `""` |
 
 ### 5.3 `Order`
 
@@ -415,17 +429,21 @@ Benefits over a json side-file:
 |---|---|---|
 | `order_id` | `str` | Engine-assigned ID |
 | `client_order_id` | `str` | Idempotency key (auto-assigned) |
+| `symbol` | `str` | Symbol |
 | `side` | `Side` | BUY / SELL |
 | `type` | `OrderType` | MARKET / LIMIT / STOP / STOP_LIMIT |
 | `qty` | `float` | Quantity after `round_qty` |
-| `price` | `float \| None` | Set only for LIMIT |
-| `stop_price` | `float \| None` | Set only for STOP variants |
+| `price` | `float \| None` | Set only for LIMIT / STOP_LIMIT |
+| `stop_price` | `float \| None` | Set only for STOP / STOP_LIMIT |
+| `created_at` | `pd.Timestamp \| None` | Submission time |
+| `status` | `str` | `open` / `filled` / `cancelled` |
 
 ### 5.4 `Fill`
 
 | Field | Type | Description |
 |---|---|---|
 | `order_id` | `str` | Which order this fill belongs to |
+| `symbol` | `str` | Symbol |
 | `side` | `Side` | BUY / SELL |
 | `qty` | `float` | Actual filled quantity |
 | `price` | `float` | Filled price (slippage already applied) |
@@ -437,6 +455,7 @@ Benefits over a json side-file:
 
 | Field | Type | Description |
 |---|---|---|
+| `symbol` | `str` | Symbol |
 | `side` | `PositionSide` | LONG / SHORT / FLAT |
 | `qty` | `float` | Absolute size (direction encoded by `side`) |
 | `entry_price` | `float` | Average entry price |
@@ -444,35 +463,51 @@ Benefits over a json side-file:
 | `unrealized_pnl` | `float` | Unrealized PnL |
 | `liquidation_price` | `float \| None` | Liquidation price (futures isolated margin) |
 
+Convenience property: `pos.is_flat` → `side == FLAT or qty == 0` (bool).
+
 ### 5.6 Enums
 
 ```python
-class Side(Enum):
+class Side(str, Enum):
     BUY = "buy"
     SELL = "sell"
 
-class OrderType(Enum):
+class OrderType(str, Enum):
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
     STOP_LIMIT = "stop_limit"
 
-class PositionSide(Enum):
+class PositionSide(str, Enum):
     LONG = "long"
     SHORT = "short"
     FLAT = "flat"
 
-class MarketType(Enum):
+class MarketType(str, Enum):
     SPOT = "spot"
     USDT_M_PERPETUAL = "usdt_m_perpetual"
 ```
 
-To import them inside strategy code (they are already auto-injected but
-you may want an explicit import for type hints):
+They are all `str`-mixed enums, so string comparisons like
+`pos.side.value == "long"` also work. `Side` / `OrderType` / `PositionSide` are
+auto-injected (no import needed); to import explicitly:
 
 ```python
-from tickweaver.core.types import Side, OrderType, PositionSide
+from tickweaver.core.types import Side, OrderType, PositionSide, MarketType
 ```
+
+### 5.7 `StrategyContext`
+
+Injected as `context`.
+
+| Field | Type | Description |
+|---|---|---|
+| `symbol` | `str` | Symbol |
+| `timeframe` | `str` | Timeframe |
+| `market_type` | `MarketType` | Defaults to `USDT_M_PERPETUAL` |
+| `bar_index` | `int` | Current bar index |
+| `now` | `pd.Timestamp \| None` | Current timestamp |
+| `extras` | `dict[str, Any]` | Extension bag |
 
 ---
 
@@ -516,6 +551,11 @@ TRAIL_PCT = 0.02
 high_water = None
 
 
+def on_init():
+    global high_water
+    high_water = None
+
+
 def on_bar(bar):
     global high_water
     if some_entry_signal(bar) and api.is_flat():
@@ -540,6 +580,11 @@ def on_tick(tick):
 HOLD_N = 5
 
 bars_held = 0
+
+
+def on_init():
+    global bars_held
+    bars_held = 0
 
 
 def on_bar(bar):
@@ -639,12 +684,26 @@ def on_init():
     prev_close = 0.0   # <- reset every run
 ```
 
+### 7.8 No shorting from FLAT in spot mode
+
+`configs/default.yaml` is `mode: spot`. In spot mode `market_sell` is legal
+**only to close an existing LONG**; opening a short from FLAT raises
+`SpotShortNotAllowedError`. Run long/short strategies with
+`--config futures.yaml` (`mode: futures`).
+
+### 7.9 Zero-qty orders are silently ignored
+
+If the qty rounds to ≤ 0, the order method does not submit; it returns an empty
+string `""` and logs a `zero_qty_order` warning (no exception). This happens
+when cash is insufficient or `size_from_cash_pct` falls below the step size, so
+guard with `if size > 0:` when a zero size is possible.
+
 ---
 
 ## 8. FAQ
 
 **Q. Is there an indicator library?**
-A. Yes -- `src/tickweaver/strategy/indicators.py` provides ten streaming
+A. Yes -- `src/tickweaver/strategy/indicators.py` provides eleven streaming
 indicators:
 
 | Class | Signature | Warm-up |
@@ -653,6 +712,7 @@ indicators:
 | `EMA(period)` | `update(price) -> ema \| None` (SMA seed + alpha weighting) | period bars |
 | `RSI(period=14)` | `update(price) -> rsi \| None` (Wilder smoothing) | period + 1 bars |
 | `ATR(period=14)` | `update(high, low, close)` or `update_bar(bar)` | period bars |
+| `ADX(period=14)` | `update(high, low, close)` or `update_bar(bar)` → `.value(=ADX) / .plus_di / .minus_di` (Wilder ADX + DMI) | +DI/-DI: period+1 bars, ADX: 2*period bars |
 | `SuperTrend(period=10, multiplier=3.0)` | `update(high, low, close)` or `update_bar(bar)` → `.value / .direction` (ATR-based trend filter / flip line) | period bars |
 | `MACD(fast=12, slow=26, signal=9)` | `update(price)` → `.macd / .signal / .histogram` | slow + signal bars |
 | `BollingerBands(period=20, mult=2.0)` | `update(price) -> (mid, upper, lower) \| None` | period bars |
@@ -683,6 +743,10 @@ state in module globals.
 **Q. How do I write a custom indicator?**
 A. Keep state in a module-level dict or class instance and call
 `update(bar.close)` inside `on_bar(bar)`. The simplest pattern.
+
+**Q. Where do trading parameters go? Do I need a json file?**
+A. No. They are module constants at the top of the `.py` (§4). The
+`<strategy>.json` pairing no longer exists.
 
 **Q. Multi-symbol support?**
 A. Not at this stage (D3 single-asset). Multi-symbol is future work.
@@ -757,7 +821,7 @@ The viz layer requires the following interface on any indicator object:
 > the indicator on its own terms (`.update(bar.close)`, `.update_bar(bar)`,
 > `.update(h, l, c)`, ...).
 
-### 9.3 Default metadata on the ten built-in indicators
+### 9.3 Default metadata on the eleven built-in indicators
 
 | Class | `PANEL` | `SUBVALUES` |
 |---|---|---|
@@ -765,6 +829,7 @@ The viz layer requires the following interface on any indicator object:
 | `EMA` | `"price"` | `None` |
 | `RSI` | `"rsi"` | `None` |
 | `ATR` | `"atr"` | `None` |
+| `ADX` | `"adx"` | `("adx", "plus_di", "minus_di")` |
 | `SuperTrend` | `"price"` | `None` |
 | `MACD` | `"macd"` | `("macd", "signal", "histogram")` |
 | `BollingerBands` | `"price"` | `("middle", "upper", "lower")` |

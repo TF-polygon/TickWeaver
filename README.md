@@ -70,7 +70,7 @@ to inspect candles, fill markers, and trade pairs on an interactive chart.
 
 | Feature | What it is |
 |---------|------------|
-| **Ten built-in streaming indicators** | `SMA`, `EMA`, `RSI`, `ATR`, `SuperTrend`, `MACD`, `BollingerBands`, `Stochastic`, `Pivot`, `HARSI` — one common contract, count-based and deterministic |
+| **Eleven built-in streaming indicators** | `SMA`, `EMA`, `RSI`, `ATR`, `ADX`, `SuperTrend`, `MACD`, `BollingerBands`, `Stochastic`, `Pivot`, `HARSI` — one common contract, count-based and deterministic |
 | **All four major order types** | `MARKET`, `LIMIT`, `STOP`, `STOP_LIMIT`, with lookahead protection |
 | **Two synthesis algorithms** | `uniform` (default) and `bridge` (Brownian bridge) for intra-bar tick paths |
 | **HTML report per run** | metrics, equity curve + drawdown, trades table, and a tick-synthesis proof section |

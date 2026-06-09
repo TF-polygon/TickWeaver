@@ -293,7 +293,7 @@ def on_init():
 - When `--viz` is off, every viz call is a no-op, so it is safe to leave these
   calls in production strategy code.
 - An indicator class must carry `PANEL` (required, str) + `SUBVALUES` (`None`
-  or a tuple) metadata. The ten built-ins (`SMA` / `EMA` / `RSI` / `ATR` /
+  or a tuple) metadata. The eleven built-ins (`SMA` / `EMA` / `RSI` / `ATR` / `ADX` /
   `SuperTrend` / `MACD` / `BollingerBands` / `Stochastic` / `Pivot` / `HARSI`)
   already define these.
 - Writing a custom indicator, multi-value decomposition (BB / MACD), style
